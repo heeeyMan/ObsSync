@@ -172,12 +172,12 @@ export default class GitSyncPlugin extends Plugin {
 		// only; auto/startup (silent) syncs stay quiet either way.
 		const progressNotice =
 			!silent && Platform.isMobile
-				? new Notice("GitSync: " + t("statusSyncing"), 0)
+				? new Notice("Git Vault Sync: " + t("statusSyncing"), 0)
 				: null;
 		try {
 			const result = await this.git.sync((msg) => {
 				this.statusTextEl.setText(msg);
-				progressNotice?.setMessage("GitSync: " + msg);
+				progressNotice?.setMessage("Git Vault Sync: " + msg);
 			}, only);
 			await this.markSynced();
 			const parts: string[] = [];
@@ -195,7 +195,7 @@ export default class GitSyncPlugin extends Plugin {
 			}
 		} catch (err) {
 			if (err instanceof MergeConflict) {
-				console.warn("GitSync merge conflict", err.files);
+				console.warn("Git Vault Sync merge conflict", err.files);
 				if (silent) {
 					// Background sync: don't open a modal over the user's work.
 					// Park the conflict and surface a sticky status-bar state;
@@ -207,7 +207,7 @@ export default class GitSyncPlugin extends Plugin {
 					this.openConflictModal(err);
 				}
 			} else {
-				console.error("GitSync sync failed", err);
+				console.error("Git Vault Sync sync failed", err);
 				// Silent (auto/startup) sync: stay quiet — a stale token or no
 				// network would otherwise spam a Notice every tick. The sticky
 				// status-bar error indicator (lastSyncError) carries it instead.
@@ -352,7 +352,7 @@ export default class GitSyncPlugin extends Plugin {
 				})
 			);
 		} catch (err) {
-			console.error("GitSync connection test failed", err);
+			console.error("Git Vault Sync connection test failed", err);
 			new Notice(t("noticeConnFailed", { msg: (err as Error).message }));
 		}
 	}
