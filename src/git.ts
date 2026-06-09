@@ -104,11 +104,46 @@ export class GitManager {
 	 */
 	private chain: Promise<unknown> = Promise.resolve();
 
+	/**
+	 * Patterns parsed from the repo's root `.gitignore`, cached so the
+	 * synchronous {@link excludeMatcher} (called once per file inside a status
+	 * scan) needn't re-read/parse the file. Refreshed once per public operation
+	 * via {@link refreshGitignore}; `[]` means no `.gitignore` (or it's empty).
+	 */
+	private gitignorePatterns: string[] = [];
+
 	constructor(
 		adapter: DataAdapter,
 		private readonly getSettings: () => GitSyncSettings
 	) {
 		this.fs = new GitFs(adapter);
+	}
+
+	/**
+	 * Read + parse the repo's root `.gitignore` into {@link gitignorePatterns}.
+	 *
+	 * `excludeMatcher` is synchronous (it runs as a per-file `statusMatrix`
+	 * filter), but the fs adapter is async, so we can't read inside the matcher.
+	 * Instead each public entry point that scans status (`countChanges`,
+	 * `listChanges`, `sync`, `completeMerge`) calls this once up front; the
+	 * matcher then reads the cached patterns synchronously. Missing/empty file →
+	 * empty list, so behavior degrades to excludePaths-only.
+	 */
+	private async refreshGitignore(): Promise<void> {
+		const path = `${this.dir}.gitignore`;
+		let raw: string;
+		try {
+			const content = await this.fs.readFile(path, "utf8");
+			raw =
+				typeof content === "string"
+					? content
+					: new TextDecoder().decode(content);
+		} catch {
+			// No .gitignore (or unreadable): behave as before — excludePaths only.
+			this.gitignorePatterns = [];
+			return;
+		}
+		this.gitignorePatterns = parseGitignore(raw);
 	}
 
 	/**
@@ -225,6 +260,7 @@ export class GitManager {
 
 	/** Number of files that differ from HEAD, ignoring excluded paths. */
 	async countChanges(): Promise<number> {
+		await this.refreshGitignore();
 		const excluded = this.excludeMatcher();
 		// `filter` drops excluded paths *before* statusMatrix hashes them, so we
 		// never read/SHA the content of files the user excluded. countChanges
@@ -244,6 +280,7 @@ export class GitManager {
 
 	/** List the changes that a sync would commit (excluded paths omitted). */
 	async listChanges(): Promise<ChangeEntry[]> {
+		await this.refreshGitignore();
 		const excluded = this.excludeMatcher();
 		const matrix = await git.statusMatrix({
 			fs: this.fs,
@@ -260,12 +297,20 @@ export class GitManager {
 		return out.sort((a, b) => a.path.localeCompare(b.path));
 	}
 
-	/** Build a predicate matching the user's excluded glob patterns. */
+	/**
+	 * Build a predicate matching excluded paths from BOTH the user's
+	 * `excludePaths` setting AND the repo's root `.gitignore` (cached in
+	 * {@link gitignorePatterns}, populated by {@link refreshGitignore} at the
+	 * start of the current operation). A path is excluded if it matches any
+	 * pattern from either source, so a single committed `.gitignore` excludes
+	 * files on every device and stays consistent with other git clients.
+	 */
 	private excludeMatcher(): (path: string) => boolean {
-		const patterns = (this.getSettings().excludePaths || "")
+		const settingPatterns = (this.getSettings().excludePaths || "")
 			.split("\n")
 			.map((s) => s.trim())
 			.filter(Boolean);
+		const patterns = [...settingPatterns, ...this.gitignorePatterns];
 		if (patterns.length === 0) return () => false;
 		const regexes = patterns.map(globToRegExp);
 		return (path) => regexes.some((re) => re.test(path));
@@ -295,6 +340,9 @@ export class GitManager {
 		only?: string[]
 	): Promise<SyncResult> {
 		const branch = this.getSettings().branch || "main";
+		// Load .gitignore once for this whole operation; excludeMatcher (sync)
+		// reads the cached patterns for every staging/status scan below.
+		await this.refreshGitignore();
 		const result: SyncResult = {
 			committed: false,
 			pulled: false,
@@ -831,6 +879,8 @@ export class GitManager {
 		skipPaths: string[],
 		restore: Map<string, Uint8Array | null> | null
 	): Promise<SyncResult> {
+		// stageAll below relies on excludeMatcher; load .gitignore first.
+		await this.refreshGitignore();
 		log(t("progApplying"));
 		for (const [filepath, res] of resolutions) {
 			if (res.type === "manual") {
@@ -915,6 +965,28 @@ export class GitManager {
 			stamp
 		);
 	}
+}
+
+/**
+ * Parse the text of a `.gitignore` into the same glob patterns
+ * {@link globToRegExp} consumes, so `.gitignore` semantics match `excludePaths`.
+ *
+ * Per line: trim, drop blanks and `#` comments. Lines beginning with `!`
+ * (negations / re-includes) are SKIPPED — re-include is not supported yet, but
+ * we never crash on them. Everything else is forwarded verbatim to the existing
+ * glob→RegExp converter (a trailing `/` keeps folder semantics, a `/`-less name
+ * matches at any depth, `*`/`**` behave as in `excludePaths`).
+ */
+function parseGitignore(text: string): string[] {
+	const out: string[] = [];
+	for (const line of text.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed) continue; // blank
+		if (trimmed.startsWith("#")) continue; // comment
+		if (trimmed.startsWith("!")) continue; // negation: unsupported, skip
+		out.push(trimmed);
+	}
+	return out;
 }
 
 /**
