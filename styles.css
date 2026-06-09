@@ -1,0 +1,124 @@
+/* ObsSync styles */
+
+.obssync-status-bar {
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.obssync-status-icon {
+	display: inline-flex;
+	align-items: center;
+}
+
+.obssync-status-icon .svg-icon {
+	width: 16px;
+	height: 16px;
+}
+
+.obssync-status-text:empty {
+	display: none;
+}
+
+.obssync-status-bar--syncing {
+	color: var(--text-accent);
+}
+
+.obssync-status-bar--syncing .obssync-status-icon .svg-icon {
+	animation: obssync-spin 1s linear infinite;
+}
+
+.obssync-status-bar--error {
+	color: var(--text-error);
+}
+
+@keyframes obssync-spin {
+	from {
+		transform: rotate(0deg);
+	}
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.obssync-conflict-editor {
+	width: 100%;
+	min-height: 160px;
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-small);
+	white-space: pre;
+}
+
+.obssync-conflict-preview {
+	max-height: 240px;
+	overflow: auto;
+	font-size: var(--font-ui-smaller);
+	background: var(--background-secondary);
+	padding: 8px;
+	border-radius: 6px;
+}
+
+.obssync-hidden {
+	display: none;
+}
+
+.obssync-exclude-textarea {
+	width: 100%;
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+}
+
+.obssync-review-list {
+	max-height: 50vh;
+	overflow-y: auto;
+	margin: 8px 0;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+}
+
+.obssync-review-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 8px;
+	cursor: pointer;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.obssync-review-row:last-child {
+	border-bottom: none;
+}
+
+.obssync-review-row:hover {
+	background: var(--background-modifier-hover);
+}
+
+.obssync-review-path {
+	font-size: var(--font-ui-small);
+	word-break: break-all;
+}
+
+.obssync-badge {
+	flex: 0 0 auto;
+	width: 18px;
+	text-align: center;
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	font-weight: bold;
+	border-radius: 3px;
+	color: var(--text-on-accent);
+}
+
+.obssync-badge--added {
+	background: var(--color-green);
+}
+
+.obssync-badge--modified {
+	background: var(--color-yellow);
+	color: var(--text-normal);
+}
+
+.obssync-badge--deleted {
+	background: var(--color-red);
+}
