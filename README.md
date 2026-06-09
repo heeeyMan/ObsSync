@@ -31,13 +31,28 @@ works on Android/iOS as well as desktop.
 - A **Personal Access Token** (PAT). For a fine-grained token, grant the repo
   **Contents: Read and write**.
 
-## Installation (manual)
+## Installation
 
-GitSync is not in the community plugin store. To install:
+GitSync is not yet in the community plugin store. There are two ways to install
+it today.
 
-1. Build the plugin (see *Building from source*) or download a release.
-2. Copy `main.js`, `manifest.json`, and `styles.css` into
-   `<your-vault>/.obsidian/plugins/gitsync/`.
+### Via BRAT (recommended — auto-updates)
+
+[BRAT](https://github.com/TfTHacker/obsidian42-brat) installs plugins straight
+from a GitHub repo and keeps them updated. Works on desktop and mobile.
+
+1. Install **BRAT** from the community plugin store and enable it.
+2. Run **BRAT: Add a beta plugin for testing** and paste this repo's URL.
+3. BRAT downloads the latest release and enables GitSync.
+
+### Manual
+
+1. Download `main.js`, `manifest.json`, and `styles.css` from the
+   [latest release](../../releases/latest) (or build them — see *Building from
+   source*).
+2. Copy the three files into `<your-vault>/.obsidian/plugins/gitsync/`.
+   On mobile, copy them into the same folder inside the vault (see
+   [TESTING.md](./TESTING.md) for per-platform tips).
 3. In Obsidian: **Settings → Community plugins**, enable **GitSync**.
 
 ## Configuration
@@ -93,6 +108,21 @@ See [CLAUDE.md](./CLAUDE.md) for the module map, sync flow, and implementation
 notes (the isomorphic-git filesystem/HTTP adapters, conflict handling, and the
 non-obvious gotchas).
 
+## Security
+
+- **Your Personal Access Token is stored in plaintext** in this plugin's
+  `.obsidian/plugins/gitsync/data.json`. Obsidian has no secure secret storage
+  available to plugins, so the token sits on disk unencrypted, like other Git
+  plugins for Obsidian.
+- The token is sent only to your configured Git remote over HTTPS (as a Basic
+  auth header), never to any third party. It is not logged and not written into
+  commits.
+- **If your vault itself is tracked by Git**, make sure
+  `.obsidian/plugins/gitsync/data.json` (or the whole plugin folder) is in your
+  vault's `.gitignore`, or your token will be pushed to the remote.
+- Use a **fine-grained token** scoped to the single repo with **Contents: Read
+  and write**, so a leak has the smallest possible blast radius.
+
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE).

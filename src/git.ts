@@ -5,6 +5,13 @@ import { obsidianHttpClient } from "./git-http";
 import type { GitSyncSettings } from "./settings";
 import { t } from "./i18n";
 
+/**
+ * History depth pulled on the very first fetch of a fresh repo. Keeping it
+ * shallow avoids loading the whole vault history into memory on mobile;
+ * subsequent fetches deepen on demand. 1 is enough to adopt the remote tip.
+ */
+const INITIAL_FETCH_DEPTH = 1;
+
 export interface SyncResult {
 	/** A local commit was created from working-tree changes. */
 	committed: boolean;
@@ -59,11 +66,35 @@ export class GitManager {
 	private readonly fs: GitFs;
 	private readonly dir = "/";
 
+	/**
+	 * Serializes all mutating public operations against the shared `.git/index`.
+	 * Concurrent commits would otherwise race and silently drop one of them.
+	 */
+	private chain: Promise<unknown> = Promise.resolve();
+
 	constructor(
 		adapter: DataAdapter,
 		private readonly getSettings: () => GitSyncSettings
 	) {
 		this.fs = new GitFs(adapter);
+	}
+
+	/**
+	 * Run `fn` exclusively, queued behind any in-flight mutating operation.
+	 * A failure in one operation must not break the lock for the next, so the
+	 * chain is advanced with the rejection swallowed (the caller still sees it).
+	 *
+	 * Public mutating methods funnel through here and delegate to private,
+	 * un-guarded `*Inner` helpers; internal calls use the inner helpers directly
+	 * so re-entrancy never deadlocks on the same lock.
+	 */
+	private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+		const run = this.chain.then(fn, fn);
+		this.chain = run.then(
+			() => {},
+			() => {}
+		);
+		return run;
 	}
 
 	private base() {
@@ -109,24 +140,34 @@ export class GitManager {
 
 	/** Number of files that differ from HEAD, ignoring excluded paths. */
 	async countChanges(): Promise<number> {
-		const matrix = await git.statusMatrix({ fs: this.fs, dir: this.dir });
 		const excluded = this.excludeMatcher();
+		// `filter` drops excluded paths *before* statusMatrix hashes them, so we
+		// never read/SHA the content of files the user excluded. countChanges
+		// runs on the status-bar timer (~every 1.5s); hashing the whole vault
+		// each tick caused freezes and battery drain on mobile.
+		const matrix = await git.statusMatrix({
+			fs: this.fs,
+			dir: this.dir,
+			filter: (filepath) => !excluded(filepath),
+		});
 		// [filepath, HEAD, workdir, stage]; unchanged === [1,1,1].
 		return matrix.filter(
-			([filepath, head, workdir, stage]) =>
-				!(head === 1 && workdir === 1 && stage === 1) &&
-				!excluded(filepath)
+			([, head, workdir, stage]) =>
+				!(head === 1 && workdir === 1 && stage === 1)
 		).length;
 	}
 
 	/** List the changes that a sync would commit (excluded paths omitted). */
 	async listChanges(): Promise<ChangeEntry[]> {
-		const matrix = await git.statusMatrix({ fs: this.fs, dir: this.dir });
 		const excluded = this.excludeMatcher();
+		const matrix = await git.statusMatrix({
+			fs: this.fs,
+			dir: this.dir,
+			filter: (filepath) => !excluded(filepath),
+		});
 		const out: ChangeEntry[] = [];
 		for (const [filepath, head, workdir, stage] of matrix) {
 			if (head === 1 && workdir === 1 && stage === 1) continue; // unchanged
-			if (excluded(filepath)) continue;
 			const status =
 				head === 0 ? "added" : workdir === 0 ? "deleted" : "modified";
 			out.push({ path: filepath, status });
@@ -159,6 +200,13 @@ export class GitManager {
 		log: ProgressLog = () => {},
 		only?: string[]
 	): Promise<SyncResult> {
+		return this.runExclusive(() => this.syncInner(log, only));
+	}
+
+	private async syncInner(
+		log: ProgressLog,
+		only?: string[]
+	): Promise<SyncResult> {
 		const branch = this.getSettings().branch || "main";
 		const result: SyncResult = {
 			committed: false,
@@ -170,8 +218,24 @@ export class GitManager {
 		// Deselected local changes must stay out of any merge commit, and their
 		// on-disk edits must survive the merge (which rewrites the working tree).
 		const skip = only ? await this.deselectedPaths(only) : [];
-		const snapshot = skip.length ? await this.snapshotPaths(skip) : null;
 
+		// The merge-checkout rewrites the working tree from the merged tree, so
+		// it clobbers on-disk edits to *tracked* files that aren't part of the
+		// merge. Deselected files (`skip`) are one such set; the other is files
+		// that are tracked but excluded from staging — their edits never get
+		// committed, so they'd silently vanish after a merge. Snapshot both so
+		// restoreSnapshotSafely can put them back. (Untracked excluded files,
+		// e.g. data.json with the token, are left out: git never writes them.)
+		const protectedPaths = new Set(skip);
+		for (const p of await this.trackedExcludedModified()) {
+			protectedPaths.add(p);
+		}
+		const snapshot = protectedPaths.size
+			? await this.snapshotPaths([...protectedPaths])
+			: null;
+
+		let caught: unknown;
+		let isConflict = false;
 		try {
 			// 1. Stage the chosen changes (or all of them), then commit.
 			log(t("progStaging"));
@@ -195,14 +259,48 @@ export class GitManager {
 
 			// 3. Push, retrying once if the remote advanced after our fetch.
 			await this.pushLoop(branch, result, log, skip, snapshot);
-
-			// 4. Restore deselected edits the merge may have overwritten.
-			if (snapshot) await this.restoreSnapshot(snapshot);
 		} catch (err) {
-			throw friendlyError(err);
+			caught = friendlyError(err);
+			isConflict = caught instanceof MergeConflict;
+		} finally {
+			// Restore deselected edits the merge may have overwritten — even if
+			// fetch/merge/push threw (e.g. mobile lost the network between
+			// commit and push), or those edits are lost irrecoverably.
+			//
+			// A MergeConflict is the one exception: the snapshot travels with it
+			// to the resolver, which restores after completeMerge/abortMerge.
+			// Restoring here would clobber the conflict markers the UI needs.
+			if (snapshot && !isConflict) {
+				await this.restoreSnapshotSafely(snapshot);
+			}
 		}
+		if (caught) throw caught;
 
 		return result;
+	}
+
+	/**
+	 * Paths that are excluded from staging yet tracked in HEAD and edited on
+	 * disk. Their edits never get committed (they're excluded), so a merge
+	 * checkout would silently discard them unless we snapshot + restore them.
+	 * We deliberately scan only the excluded set (filter inverts the usual
+	 * exclude predicate), so when nothing is excluded this hashes nothing.
+	 */
+	private async trackedExcludedModified(): Promise<string[]> {
+		const excluded = this.excludeMatcher();
+		const matrix = await git.statusMatrix({
+			fs: this.fs,
+			dir: this.dir,
+			filter: (filepath) => excluded(filepath),
+		});
+		const out: string[] = [];
+		for (const [filepath, head, workdir] of matrix) {
+			// head === 1: tracked in HEAD. workdir !== 1: edited or deleted on
+			// disk relative to HEAD. Untracked excluded files (head === 0) are
+			// skipped — git never touches them during a merge.
+			if (head === 1 && workdir !== 1) out.push(filepath);
+		}
+		return out;
 	}
 
 	/** Changed local paths the user left unselected (relative complement of `only`). */
@@ -233,13 +331,29 @@ export class GitManager {
 		return snap;
 	}
 
-	/** Rewrite the snapshot back to the working tree (unlink where absent). */
-	private async restoreSnapshot(
+	/**
+	 * Restore the snapshot, attempting every file even if some fail (so a single
+	 * bad path doesn't strand the rest). If anything fails — e.g. the phone's
+	 * disk is full — surface a clear error rather than silently dropping the
+	 * user's deselected edits.
+	 */
+	private async restoreSnapshotSafely(
 		snap: Map<string, Uint8Array | null>
 	): Promise<void> {
+		const failed: string[] = [];
 		for (const [p, content] of snap) {
-			if (content === null) await this.fs.unlink(p);
-			else await this.fs.writeFile(p, content);
+			try {
+				if (content === null) await this.fs.unlink(p);
+				else await this.fs.writeFile(p, content);
+			} catch {
+				failed.push(p);
+			}
+		}
+		if (failed.length) {
+			// Surfacing the raw paths is far better than silently dropping edits.
+			throw new Error(
+				t("errRestoreFailed", { files: failed.join(", ") })
+			);
 		}
 	}
 
@@ -382,6 +496,10 @@ export class GitManager {
 	 * fresh repo with no local commits) check out the remote branch.
 	 */
 	async initialize(log: ProgressLog = () => {}): Promise<void> {
+		return this.runExclusive(() => this.initializeInner(log));
+	}
+
+	private async initializeInner(log: ProgressLog): Promise<void> {
 		const s = this.getSettings();
 		const branch = s.branch || "main";
 		try {
@@ -411,6 +529,11 @@ export class GitManager {
 				ref: branch,
 				singleBranch: true,
 				tags: false,
+				// Shallow + single-branch on the first fetch so we don't pull the
+				// vault's entire history into memory on a phone (OOM risk). Later
+				// fetches in fetchAndMerge omit `depth`, so isomorphic-git deepens
+				// the shallow clone on demand when a merge needs older commits.
+				depth: INITIAL_FETCH_DEPTH,
 			});
 
 			const remoteOid = await this.tryResolve(
@@ -457,12 +580,15 @@ export class GitManager {
 		only?: Set<string>,
 		skip?: Set<string>
 	): Promise<number> {
-		const matrix = await git.statusMatrix({ fs: this.fs, dir: this.dir });
 		const excluded = this.excludeMatcher();
+		const matrix = await git.statusMatrix({
+			fs: this.fs,
+			dir: this.dir,
+			filter: (filepath) => !excluded(filepath),
+		});
 		let changed = 0;
 		for (const [filepath, head, workdir, stage] of matrix) {
 			if (head === 1 && workdir === 1 && stage === 1) continue; // unchanged
-			if (excluded(filepath)) continue;
 			if (only && !only.has(filepath)) continue;
 			if (skip && skip.has(filepath)) continue;
 			if (workdir === 0) {
@@ -511,6 +637,28 @@ export class GitManager {
 		skipPaths: string[] = [],
 		restore: Map<string, Uint8Array | null> | null = null
 	): Promise<SyncResult> {
+		return this.runExclusive(() =>
+			this.completeMergeInner(
+				resolutions,
+				oursOid,
+				theirsOid,
+				branch,
+				log,
+				skipPaths,
+				restore
+			)
+		);
+	}
+
+	private async completeMergeInner(
+		resolutions: Map<string, Resolution>,
+		oursOid: string,
+		theirsOid: string,
+		branch: string,
+		log: ProgressLog,
+		skipPaths: string[],
+		restore: Map<string, Uint8Array | null> | null
+	): Promise<SyncResult> {
 		log(t("progApplying"));
 		for (const [filepath, res] of resolutions) {
 			if (res.type === "manual") {
@@ -545,7 +693,9 @@ export class GitManager {
 		});
 
 		// Restore deselected edits the merge overwrote in the working tree.
-		if (restore) await this.restoreSnapshot(restore);
+		// Done before the push so it survives a push failure (mobile network
+		// loss); a restore failure throws rather than dropping edits silently.
+		if (restore) await this.restoreSnapshotSafely(restore);
 
 		log(t("progPushing"));
 		try {
@@ -569,13 +719,20 @@ export class GitManager {
 		branch: string,
 		snapshot: Map<string, Uint8Array | null> | null = null
 	): Promise<void> {
+		return this.runExclusive(() => this.abortMergeInner(branch, snapshot));
+	}
+
+	private async abortMergeInner(
+		branch: string,
+		snapshot: Map<string, Uint8Array | null> | null
+	): Promise<void> {
 		await git.checkout({
 			fs: this.fs,
 			dir: this.dir,
 			ref: branch,
 			force: true,
 		});
-		if (snapshot) await this.restoreSnapshot(snapshot);
+		if (snapshot) await this.restoreSnapshotSafely(snapshot);
 	}
 
 	private commitMessage(): string {
@@ -658,7 +815,12 @@ function friendlyError(err: unknown): Error {
 	) {
 		return new Error(t("errAuth"));
 	}
-	if (/network|fetch failed|ENOTFOUND|getaddrinfo|ETIMEDOUT|timeout/i.test(msg)) {
+	if (
+		/network|fetch failed|Failed to fetch|ENOTFOUND|getaddrinfo|ECONNRESET|ETIMEDOUT|ERR_|socket|aborted|timed? ?out|timeout/i.test(
+			msg
+		) ||
+		/^ERR_/.test(code ?? "")
+	) {
 		return new Error(t("errNetwork"));
 	}
 	if (/could not find|NotFoundError/i.test(msg) && /remote|ref/i.test(msg)) {

@@ -47,7 +47,36 @@
 	min-height: 160px;
 	font-family: var(--font-monospace);
 	font-size: var(--font-ui-small);
-	white-space: pre;
+	white-space: pre-wrap;
+}
+
+/* Conflict modal: scrollable file list above a pinned footer so the
+   Resolve/Cancel buttons stay reachable on small (mobile) screens. */
+.gitsync-conflict-modal .modal-content {
+	display: flex;
+	flex-direction: column;
+	max-height: 80vh;
+}
+
+.gitsync-conflict-body {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	min-height: 0;
+}
+
+.gitsync-conflict-footer {
+	flex: 0 0 auto;
+	border-top: 1px solid var(--background-modifier-border);
+	padding-top: 8px;
+	margin-top: 8px;
+}
+
+/* Shrink the editor on narrow (phone) widths so several files plus the
+   footer fit without endless scrolling. */
+@media (max-width: 600px) {
+	.gitsync-conflict-editor {
+		min-height: 96px;
+	}
 }
 
 .gitsync-conflict-preview {
@@ -138,4 +167,52 @@
 
 .gitsync-badge--deleted {
 	background: var(--color-red);
+}
+
+/* Inline validation feedback under a settings field. */
+.gitsync-setting-hint {
+	margin-top: 4px;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.gitsync-setting-error {
+	margin-top: 4px;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-error);
+}
+
+/* --- Mobile: bigger touch targets and tighter settings --- */
+@media (max-width: 600px) {
+	.gitsync-review-row {
+		padding: 11px 10px;
+		gap: 12px;
+	}
+
+	.gitsync-review-row input[type="checkbox"] {
+		width: 20px;
+		height: 20px;
+	}
+
+	.gitsync-badge {
+		width: 22px;
+	}
+
+	.gitsync-exclude-textarea {
+		min-height: 120px;
+	}
+}
+
+body.is-mobile .gitsync-review-row {
+	padding: 11px 10px;
+	gap: 12px;
+}
+
+body.is-mobile .gitsync-review-row input[type="checkbox"] {
+	width: 20px;
+	height: 20px;
+}
+
+body.is-mobile .gitsync-exclude-textarea {
+	min-height: 120px;
 }

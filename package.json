@@ -6,7 +6,8 @@
 	"type": "module",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
-		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"test": "node scripts/regression.mjs"
 	},
 	"keywords": ["obsidian", "git", "sync"],
 	"author": "alexandervasin",

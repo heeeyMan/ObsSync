@@ -16,6 +16,9 @@ export class ReviewModal extends Modal {
 	private entries: ChangeEntry[] = [];
 	private selected = new Set<string>();
 	private syncButton?: ButtonComponent;
+	/** Optional callback invoked once when the modal closes (used by the plugin
+	 *  to drop its reference). */
+	onCloseHook?: () => void;
 
 	constructor(
 		app: App,
@@ -123,5 +126,6 @@ export class ReviewModal extends Modal {
 
 	onClose() {
 		this.contentEl.empty();
+		this.onCloseHook?.();
 	}
 }
