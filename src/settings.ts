@@ -99,6 +99,32 @@ export class GitSyncSettingTab extends PluginSettingTab {
 			void this.fetchBranches(true);
 		}
 
+		// --- 0. Sync now (only once configured: token + remote URL set) ---
+		// This is the very first element, above the Authentication heading, so a
+		// configured user can sync straight from the tab. Rendered only when the
+		// plugin is set up for syncing; this persists across restarts (unlike the
+		// transient fetched repo list).
+		if (hasCreds) {
+			new Setting(containerEl)
+				.setName(t("syncNow"))
+				.setDesc(t("syncNowDesc"))
+				.addButton((b) => {
+					b.setButtonText(t("syncNow")).setCta();
+					b.onClick(async () => {
+						const original = t("syncNow");
+						b.setDisabled(true).setButtonText(t("cmSyncing"));
+						try {
+							// Non-silent sync: same as a manual run (notices,
+							// conflict modal). The plugin manages its own syncing
+							// flag and status bar; we only reflect button state.
+							await this.plugin.sync(false);
+						} finally {
+							b.setDisabled(false).setButtonText(original);
+						}
+					});
+				});
+		}
+
 		// --- 1. Authentication / connection ---
 		containerEl.createEl("h3", { text: t("headAuth") });
 
