@@ -25,6 +25,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 		en: "Test API pull (experimental)",
 		ru: "Тест API-загрузки (эксперимент)",
 	},
+	cmdApiSync: {
+		en: "API sync (experimental)",
+		ru: "API-синхронизация (эксперимент)",
+	},
 
 	// --- experimental Git Data API dry-run pull ---
 	apiPullBadUrl: {
@@ -51,6 +55,29 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	apiPullLogSaved: {
 		en: "Git Vault Sync: result written to {file}",
 		ru: "Git Vault Sync: результат записан в {file}",
+	},
+
+	// --- experimental Git Data API full sync (pull + push) ---
+	apiSyncStarting: {
+		en: "Git Vault Sync: starting experimental API sync…",
+		ru: "Git Vault Sync: запуск экспериментальной API-синхронизации…",
+	},
+	apiSyncProgress: { en: "Git Vault Sync: {n}", ru: "Git Vault Sync: {n}" },
+	apiSyncDone: {
+		en: "Git Vault Sync: API sync OK — pulled {pulled}, pushed {pushed}, deleted local {delLocal}, deleted remote {delRemote}.",
+		ru: "Git Vault Sync: API-синхронизация OK — получено {pulled}, отправлено {pushed}, удалено локально {delLocal}, удалено на сервере {delRemote}.",
+	},
+	apiSyncConflicts: {
+		en: "Git Vault Sync: {n} file(s) in conflict — left untouched for now (interactive resolution coming in a later version).",
+		ru: "Git Vault Sync: файлов в конфликте: {n} — пока не синхронизированы (интерактивное разрешение появится позже).",
+	},
+	apiSyncFailed: {
+		en: "Git Vault Sync: API sync failed — {msg}",
+		ru: "Git Vault Sync: ошибка API-синхронизации — {msg}",
+	},
+	apiSyncLogSaved: {
+		en: "Git Vault Sync: log written to {file}",
+		ru: "Git Vault Sync: лог записан в {file}",
 	},
 
 	// --- status-bar menu ---

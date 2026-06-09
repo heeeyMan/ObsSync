@@ -8,6 +8,7 @@ import {
 } from "obsidian";
 import type GitSyncPlugin from "./main";
 import { fetchGitHubRepos, fetchGitHubUser, GitHubRepo } from "./github-api";
+import type { ApiSyncBaseline } from "./github-sync";
 import { LangPref, t } from "./i18n";
 
 export interface GitSyncSettings {
@@ -37,6 +38,12 @@ export interface GitSyncSettings {
 	excludePaths: string;
 	/** Interface language ("auto" follows Obsidian). */
 	language: LangPref;
+	/**
+	 * Persistent baseline for the experimental API sync engine (github-sync.ts):
+	 * the confirmed common state (remote commit + per-path blob shas) after the
+	 * last successful API sync. Stored in data.json; not shown in the UI.
+	 */
+	apiBaseline: ApiSyncBaseline;
 }
 
 export const DEFAULT_SETTINGS: GitSyncSettings = {
@@ -55,6 +62,7 @@ export const DEFAULT_SETTINGS: GitSyncSettings = {
 	// first run in loadSettings() (the config folder is not always ".obsidian").
 	excludePaths: [".DS_Store", ".trash/"].join("\n"),
 	language: "auto",
+	apiBaseline: { commitSha: null, shas: {} },
 };
 
 const NEW_BRANCH = "__gitsync_new_branch__";
