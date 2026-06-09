@@ -1,6 +1,6 @@
 {
 	"name": "gitsync",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "GitSync — one-click Git sync for Obsidian with conflict resolution (EN/RU).",
 	"main": "main.js",
 	"type": "module",
@@ -9,14 +9,20 @@
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"test": "node scripts/regression.mjs"
 	},
-	"keywords": ["obsidian", "git", "sync"],
+	"keywords": [
+		"obsidian",
+		"git",
+		"sync"
+	],
 	"author": "alexandervasin",
 	"license": "MIT",
 	"devDependencies": {
 		"@types/node": "^22.0.0",
+		"buffer": "^6.0.3",
 		"builtin-modules": "^4.0.0",
 		"esbuild": "^0.24.0",
 		"obsidian": "^1.7.2",
+		"process": "^0.11.10",
 		"typescript": "^5.6.0"
 	},
 	"dependencies": {
