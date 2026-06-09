@@ -317,10 +317,10 @@ export class GitSyncSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName(t("setInitName"))
 			.setDesc(t("setInitDesc"))
-			.addButton((b) =>
-				b
+			.addButton((b) => {
+				b.buttonEl.addClass("mod-warning");
+				return b
 					.setButtonText(t("setInitButton"))
-					.setDestructive()
 					.onClick(() => {
 						void (async () => {
 							if (!s.remoteUrl || !s.token) {
@@ -351,8 +351,8 @@ export class GitSyncSettingTab extends PluginSettingTab {
 								);
 							}
 						})();
-					})
-			);
+					});
+			});
 
 		new Setting(containerEl)
 			.setName(t("setLangName"))
