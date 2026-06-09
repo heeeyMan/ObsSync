@@ -134,11 +134,37 @@ export class GitManager {
 	 */
 	private gitignorePatterns: string[] = [];
 
+	/**
+	 * Vault-relative paths that are ALWAYS excluded from staging, independent of
+	 * the user's `excludePaths` setting and the repo's `.gitignore`. This is a
+	 * hard safety net: even if a user manually tracks one of these paths, or
+	 * their `.gitignore` is broken/stale (e.g. after a plugin rename), the engine
+	 * will never stage or commit it. obsidian-ui populates this with the plugin's
+	 * own `data.json` (which holds the PAT) via {@link setAlwaysExclude}.
+	 *
+	 * Each entry is treated as both an exact path AND a folder prefix, so passing
+	 * a plugin folder excludes everything under it.
+	 */
+	private alwaysExclude: string[] = [];
+
 	constructor(
 		adapter: DataAdapter,
 		private readonly getSettings: () => GitSyncSettings
 	) {
 		this.fs = new GitFs(adapter);
+	}
+
+	/**
+	 * Register vault-relative paths that must NEVER be staged or committed,
+	 * regardless of `excludePaths` or `.gitignore`. Called by obsidian-ui after
+	 * construction (e.g. with `${configDir}/plugins/<id>/data.json` so the PAT
+	 * can never be pushed). Each path matches exactly and as a folder prefix.
+	 * Leading/trailing slashes are normalized away so matching is consistent.
+	 */
+	setAlwaysExclude(paths: string[]): void {
+		this.alwaysExclude = paths
+			.map((p) => p.replace(/^\/+/, "").replace(/\/+$/, ""))
+			.filter(Boolean);
 	}
 
 	/**
@@ -369,16 +395,26 @@ export class GitManager {
 	 * start of the current operation). A path is excluded if it matches any
 	 * pattern from either source, so a single committed `.gitignore` excludes
 	 * files on every device and stays consistent with other git clients.
+	 *
+	 * On TOP of those two configurable sources, {@link alwaysExclude} paths are
+	 * unconditionally excluded — matched as an exact path OR as a folder prefix —
+	 * so a path like the plugin's `data.json` (PAT) can never be staged even if
+	 * the user tracks it manually or `.gitignore` doesn't cover it. This guard is
+	 * checked first and cannot be turned off.
 	 */
 	private excludeMatcher(): (path: string) => boolean {
+		const always = this.alwaysExclude;
 		const settingPatterns = (this.getSettings().excludePaths || "")
 			.split("\n")
 			.map((s) => s.trim())
 			.filter(Boolean);
 		const patterns = [...settingPatterns, ...this.gitignorePatterns];
-		if (patterns.length === 0) return () => false;
 		const regexes = patterns.map(globToRegExp);
-		return (path) => regexes.some((re) => re.test(path));
+		const matchesAlways = (path: string): boolean =>
+			always.some((p) => path === p || path.startsWith(`${p}/`));
+		if (regexes.length === 0) return matchesAlways;
+		return (path) =>
+			matchesAlways(path) || regexes.some((re) => re.test(path));
 	}
 
 	private author() {
@@ -1312,6 +1348,16 @@ function friendlyError(err: unknown): Error {
 	// Rate limiting also returns 403 — surface its real message, not "bad token".
 	if (/rate limit/i.test(msg)) {
 		return err instanceof Error ? err : new Error(msg);
+	}
+	// GitHub branch-protection / push-protection (secret scanning) rejections.
+	// These can come back with a 403-flavored message, so match them BEFORE the
+	// generic auth check below — otherwise they'd be mislabeled "bad token".
+	if (
+		/push declined due to repository rule violations|repository rule violations|\bGH013\b|secret scanning|protected branch|protected_branch/i.test(
+			msg
+		)
+	) {
+		return new Error(t("errPushRule"));
 	}
 	if (
 		/\b401\b|\b403\b|Unauthorized|Bad credentials|authentication|invalid.*token/i.test(
