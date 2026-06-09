@@ -1,16 +1,48 @@
 import * as git from "isomorphic-git";
-import { DataAdapter } from "obsidian";
+import { DataAdapter, Platform } from "obsidian";
 import { GitFs } from "./git-fs";
 import { obsidianHttpClient } from "./git-http";
 import type { GitSyncSettings } from "./settings";
 import { t } from "./i18n";
 
 /**
- * History depth pulled on the very first fetch of a fresh repo. Keeping it
- * shallow avoids loading the whole vault history into memory on mobile;
- * subsequent fetches deepen on demand. 1 is enough to adopt the remote tip.
+ * History depth pulled by every shallow fetch/clone. On mobile we keep the
+ * clone permanently shallow so isomorphic-git never buffers the whole packfile
+ * (the entire vault history) into RAM — that OOMs the mobile WebView on large
+ * repos. 1 is enough to adopt/track the remote tip; a divergent merge only
+ * needs the boundary commit as its base (see {@link DEEPEN_FETCH_DEPTH}).
  */
-const INITIAL_FETCH_DEPTH = 1;
+const SHALLOW_FETCH_DEPTH = 1;
+
+/**
+ * Fallback depth used once, on a shallow clone, when a merge fails because its
+ * base isn't present locally (the remote advanced more than one commit past the
+ * shared boundary, so depth:1 didn't fetch the real merge base). Deepening to
+ * this many commits brings the base so the 3-way merge can complete; it's a
+ * bounded, one-off cost rather than the full history. Desktop never hits this
+ * path (it fetches full history).
+ */
+const DEEPEN_FETCH_DEPTH = 50;
+
+/**
+ * isomorphic-git fetch/clone options that control history depth. On mobile we
+ * stay shallow + single-branch + no tags; on desktop we pull full history so
+ * merges always have every possible base and behave like a normal clone.
+ *
+ * Pure (no `this`/Platform) so it can be unit-tested against a stubbed
+ * `shallow` flag without an Obsidian runtime.
+ */
+export function depthOptions(
+	shallow: boolean,
+	depth: number = SHALLOW_FETCH_DEPTH
+): { singleBranch: boolean; tags: boolean; depth?: number; relative?: boolean } {
+	if (!shallow) {
+		// Desktop: full history, but still skip tags and other branches — we
+		// only ever sync a single configured branch.
+		return { singleBranch: true, tags: false };
+	}
+	return { singleBranch: true, tags: false, depth, relative: false };
+}
 
 export interface SyncResult {
 	/** A local commit was created from working-tree changes. */
@@ -77,6 +109,15 @@ export class GitManager {
 		private readonly getSettings: () => GitSyncSettings
 	) {
 		this.fs = new GitFs(adapter);
+	}
+
+	/**
+	 * On mobile, keep the clone/fetch shallow so isomorphic-git never buffers
+	 * the whole packfile into the WebView's heap (OOM risk on large repos).
+	 * Desktop pulls full history for robust, base-complete merges.
+	 */
+	private get shallow(): boolean {
+		return Platform.isMobile;
 	}
 
 	/**
@@ -421,13 +462,14 @@ export class GitManager {
 	): Promise<void> {
 		const s = this.getSettings();
 		log(t("progFetching"));
+		// Mobile fetches stay shallow (depth:1) so we only pull the branch tip,
+		// never the whole history; desktop fetches full history.
 		await git.fetch({
 			...this.base(),
 			remote: "origin",
 			url: s.remoteUrl,
 			ref: branch,
-			singleBranch: true,
-			tags: false,
+			...depthOptions(this.shallow),
 		});
 
 		const remoteRef = `refs/remotes/origin/${branch}`;
@@ -436,6 +478,43 @@ export class GitManager {
 		if (!remoteOid || !localOid || localOid === remoteOid) return;
 
 		log(t("progMerging"));
+		await this.mergeRemote(
+			branch,
+			remoteRef,
+			localOid,
+			remoteOid,
+			result,
+			log,
+			skip,
+			snapshot,
+			// On mobile, allow a single deepening retry if the shallow clone is
+			// missing the merge base; desktop already has full history.
+			this.shallow
+		);
+	}
+
+	/**
+	 * Merge `remoteRef` into `branch`, checking out the merged tree on success.
+	 *
+	 * On a shallow clone the merge base is normally the shallow boundary commit
+	 * (the shared parent), so depth:1 is enough. But if the remote advanced more
+	 * than one commit past that boundary, depth:1 never fetched the real base and
+	 * isomorphic-git can't do a 3-way merge — it throws MergeNotSupportedError
+	 * (NOT a real conflict). When `allowDeepen` is set we deepen the fetch once
+	 * and retry; a genuine MergeConflictError is re-thrown as {@link MergeConflict}
+	 * for the resolver, untouched. Verified in the Node sandbox.
+	 */
+	private async mergeRemote(
+		branch: string,
+		remoteRef: string,
+		localOid: string,
+		remoteOid: string,
+		result: SyncResult,
+		log: ProgressLog,
+		skip: string[],
+		snapshot: Map<string, Uint8Array | null> | null,
+		allowDeepen: boolean
+	): Promise<void> {
 		try {
 			const merge = await git.merge({
 				fs: this.fs,
@@ -457,6 +536,39 @@ export class GitManager {
 				result.pulled = true;
 			}
 		} catch (err) {
+			// Missing merge base on a shallow clone: deepen once, then retry.
+			if (allowDeepen && isMissingBaseError(err)) {
+				log(t("progDeepening"));
+				const s = this.getSettings();
+				await git.fetch({
+					...this.base(),
+					remote: "origin",
+					url: s.remoteUrl,
+					ref: branch,
+					...depthOptions(true, DEEPEN_FETCH_DEPTH),
+				});
+				// Retry without allowing a further deepen: if the base is still
+				// missing the divergence is deeper than DEEPEN_FETCH_DEPTH, and
+				// we surface a clear, localized error rather than looping.
+				return this.mergeRemote(
+					branch,
+					remoteRef,
+					localOid,
+					remoteOid,
+					result,
+					log,
+					skip,
+					snapshot,
+					false
+				);
+			}
+			// A missing base that we couldn't (or weren't allowed to) deepen past:
+			// explain it instead of leaking the raw "Merges with conflicts are not
+			// supported" internals, and never mistake it for a resolvable conflict.
+			// Checked before mergeConflictFiles, which also matches this error code.
+			if (isMissingBaseError(err)) {
+				throw new Error(t("errShallowMerge"));
+			}
 			const files = mergeConflictFiles(err);
 			if (files) {
 				throw new MergeConflict(
@@ -578,18 +690,17 @@ export class GitManager {
 			});
 
 			log(t("progFetching"));
+			// Mobile clones shallow (depth:1, single-branch, no tags) so we never
+			// buffer the vault's whole history into the WebView heap (OOM risk).
+			// Every later fetch in fetchAndMerge stays shallow too, deepening only
+			// as a one-off fallback when a divergent merge needs an older base.
+			// Desktop pulls full history for base-complete, robust merges.
 			await git.fetch({
 				...this.base(),
 				remote: "origin",
 				url: s.remoteUrl,
 				ref: branch,
-				singleBranch: true,
-				tags: false,
-				// Shallow + single-branch on the first fetch so we don't pull the
-				// vault's entire history into memory on a phone (OOM risk). Later
-				// fetches in fetchAndMerge omit `depth`, so isomorphic-git deepens
-				// the shallow clone on demand when a merge needs older commits.
-				depth: INITIAL_FETCH_DEPTH,
+				...depthOptions(this.shallow),
 			});
 
 			const remoteOid = await this.tryResolve(
@@ -920,6 +1031,22 @@ async function safeReadBlob(
 function isUnsupportedIndexError(err: unknown): boolean {
 	const msg = String((err as Error)?.message ?? err);
 	return /unsupported dircache version|dircache/i.test(msg);
+}
+
+/**
+ * True when a merge failed because the merge base isn't present locally — the
+ * symptom of a too-shallow clone whose remote advanced past the shared
+ * boundary. isomorphic-git reports this as `MergeNotSupportedError` ("Merges
+ * with conflicts are not supported yet"), distinct from a real
+ * `MergeConflictError`. Match the code (with a message fallback) so a deepening
+ * retry can recover. Verified in the Node sandbox (deep-divergence scenario).
+ */
+function isMissingBaseError(err: unknown): boolean {
+	const e = err as { code?: string; message?: string };
+	if (e?.code === "MergeNotSupportedError") return true;
+	return /merges with conflicts are not supported/i.test(
+		String(e?.message ?? "")
+	);
 }
 
 /** Extract conflicted file paths from an isomorphic-git merge error, if any. */
