@@ -25,6 +25,19 @@ const SHALLOW_FETCH_DEPTH = 1;
 const DEEPEN_FETCH_DEPTH = 50;
 
 /**
+ * Total changed-byte budget that triggers the mobile chunked-push path. When a
+ * single sync would otherwise stage a very large set of adds/edits, building one
+ * packfile for it forces isomorphic-git to buffer every new object in the
+ * WebView's heap at once — an OOM risk on mobile. Above this threshold we split
+ * the changes into batches of (at most) this many bytes, committing + pushing
+ * each batch so only one batch's objects ever live in memory.
+ *
+ * Desktop never chunks (it has plenty of heap and full history); see
+ * {@link GitManager.shouldChunkPush}.
+ */
+const PUSH_CHUNK_THRESHOLD = 8 * 1024 * 1024;
+
+/**
  * isomorphic-git fetch/clone options that control history depth. On mobile we
  * stay shallow + single-branch + no tags; on desktop we pull full history so
  * merges always have every possible base and behave like a normal clone.
@@ -422,28 +435,45 @@ export class GitManager {
 		let caught: unknown;
 		let isConflict = false;
 		try {
-			// 1. Stage the chosen changes (or all of them), then commit.
-			log(t("progStaging"));
-			const changed = await this.stageAll(
-				only ? new Set(only) : undefined
-			);
-			if (changed > 0) {
-				log(t("progCommitting", { n: changed }));
-				await git.commit({
-					fs: this.fs,
-					dir: this.dir,
-					message: this.commitMessage(),
-					author: this.author(),
-				});
-				result.committed = true;
+			// On mobile, a very large changeset would build one giant packfile
+			// (OOM risk). When that's the case, hand off to the chunked path,
+			// which pulls first then commits + pushes in size-bounded batches so
+			// only one batch's objects ever live in the WebView heap. Otherwise
+			// run the normal single-commit flow below. shouldChunkPush is false
+			// on desktop and on small changesets, so behavior is unchanged there.
+			if (await this.shouldChunkPush(only, skip)) {
+				await this.syncChunked(
+					branch,
+					result,
+					log,
+					only,
+					skip,
+					snapshot
+				);
+			} else {
+				// 1. Stage the chosen changes (or all of them), then commit.
+				log(t("progStaging"));
+				const changed = await this.stageAll(
+					only ? new Set(only) : undefined
+				);
+				if (changed > 0) {
+					log(t("progCommitting", { n: changed }));
+					await git.commit({
+						fs: this.fs,
+						dir: this.dir,
+						message: this.commitMessage(),
+						author: this.author(),
+					});
+					result.committed = true;
+				}
+
+				// 2. Fetch + merge remote into local. On conflict this throws a
+				// MergeConflict carrying the snapshot; the resolver restores it.
+				await this.fetchAndMerge(branch, result, log, skip, snapshot);
+
+				// 3. Push, retrying once if the remote moved after our fetch.
+				await this.pushLoop(branch, result, log, skip, snapshot);
 			}
-
-			// 2. Fetch + merge remote into local. On conflict this throws a
-			// MergeConflict carrying the snapshot, and the resolver restores it.
-			await this.fetchAndMerge(branch, result, log, skip, snapshot);
-
-			// 3. Push, retrying once if the remote advanced after our fetch.
-			await this.pushLoop(branch, result, log, skip, snapshot);
 		} catch (err) {
 			// An unsupported-index error must escape RAW so withIndexRecovery can
 			// detect it (by message) and rebuild+retry. friendlyError would remap
@@ -470,6 +500,138 @@ export class GitManager {
 		if (caught) throw caught;
 
 		return result;
+	}
+
+	/**
+	 * Decide whether this sync should take the chunked-push path. True only when
+	 * ALL of:
+	 *  - we're on mobile (`this.shallow`) — desktop has heap + full history and
+	 *    always uses the single-commit flow;
+	 *  - the changeset is non-empty (nothing to chunk otherwise);
+	 *  - the total changed-byte size exceeds {@link PUSH_CHUNK_THRESHOLD}.
+	 *
+	 * Honors `only`/`skip` so the size is measured over exactly the paths the
+	 * normal flow would stage. Deletes contribute ~0 bytes (no new blob), so a
+	 * pure-delete sync never trips the threshold.
+	 */
+	private async shouldChunkPush(
+		only: string[] | undefined,
+		skip: string[]
+	): Promise<boolean> {
+		if (!this.shallow) return false;
+		const changes = await this.stageableChanges(only, skip);
+		if (changes.length === 0) return false;
+		let total = 0;
+		for (const c of changes) {
+			total += c.size;
+			if (total > PUSH_CHUNK_THRESHOLD) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Chunked-push sync (mobile, large changeset). Pulls the remote FIRST so our
+	 * batch commits land on the current remote tip and each push is a plain
+	 * fast-forward; then commits + pushes the change in size-bounded batches so
+	 * isomorphic-git only ever buffers one batch's objects.
+	 *
+	 * Ordering rationale: there are no local commits yet when we fetch+merge, so
+	 * a divergent remote simply fast-forwards (no conflict possible from our
+	 * side). A genuine remote/remote conflict can still arise only if the remote
+	 * conflicts with *already-committed* local history — that path is identical
+	 * to the normal flow and still throws {@link MergeConflict} for the resolver
+	 * (snapshot/skip carried through unchanged).
+	 *
+	 * `skip` (deselected) and excluded paths are never added to any batch, and
+	 * `snapshot` restores their merge-clobbered edits via the caller's finally.
+	 * Each batch pushes through {@link pushLoop}, so a remote that moves between
+	 * batches triggers the usual re-fetch+merge+retry.
+	 */
+	private async syncChunked(
+		branch: string,
+		result: SyncResult,
+		log: ProgressLog,
+		only: string[] | undefined,
+		skip: string[],
+		snapshot: Map<string, Uint8Array | null> | null
+	): Promise<void> {
+		// 1. Pull remote first (onto a tip with no new local commits) so our
+		// batch commits append cleanly. May throw MergeConflict if the remote
+		// conflicts with existing committed history — same contract as usual.
+		await this.fetchAndMerge(branch, result, log, skip, snapshot);
+
+		// 2. Recompute the changeset AFTER the merge (the checkout may have
+		// rewritten the working tree), then split into size-bounded batches.
+		const changes = await this.stageableChanges(only, skip);
+		if (changes.length === 0) {
+			// The merge already absorbed everything (or it was all deselected).
+			await this.pushLoop(branch, result, log, skip, snapshot);
+			return;
+		}
+		const batches = chunkChanges(changes, PUSH_CHUNK_THRESHOLD);
+
+		// 3. Commit + push each batch. Staging is restricted to the batch's
+		// paths, so each commit (and its push packfile) carries only that batch.
+		for (let i = 0; i < batches.length; i++) {
+			const batch = batches[i];
+			const batchPaths = new Set(batch.map((c) => c.path));
+			log(
+				t("progPushingBatch", {
+					n: i + 1,
+					total: batches.length,
+				})
+			);
+			const staged = await this.stageAll(batchPaths);
+			if (staged > 0) {
+				await git.commit({
+					fs: this.fs,
+					dir: this.dir,
+					message: this.commitMessage(),
+					author: this.author(),
+				});
+				result.committed = true;
+			}
+			// Push this batch (re-fetch+merge+retry on a non-fast-forward).
+			await this.pushLoop(branch, result, log, skip, snapshot);
+		}
+	}
+
+	/**
+	 * The adds/edits/deletes a sync would stage, with each path's on-disk byte
+	 * size (deletes/absent → 0). Mirrors {@link stageAll}'s selection: honors the
+	 * exclude matcher, the optional `only` allow-list, and the `skip` deny-list,
+	 * so chunk sizing and chunk membership match what actually gets committed.
+	 */
+	private async stageableChanges(
+		only: string[] | undefined,
+		skip: string[]
+	): Promise<{ path: string; size: number }[]> {
+		const excluded = this.excludeMatcher();
+		const onlySet = only ? new Set(only) : undefined;
+		const skipSet = new Set(skip);
+		const matrix = await git.statusMatrix({
+			fs: this.fs,
+			dir: this.dir,
+			filter: (filepath) => !excluded(filepath),
+		});
+		const out: { path: string; size: number }[] = [];
+		for (const [filepath, head, workdir, stage] of matrix) {
+			if (head === 1 && workdir === 1 && stage === 1) continue; // unchanged
+			if (onlySet && !onlySet.has(filepath)) continue;
+			if (skipSet.has(filepath)) continue;
+			let size = 0;
+			if (workdir !== 0) {
+				// An add/edit: weigh it by its current on-disk size. A deleted
+				// file (workdir === 0) is absent, so it stays at 0 bytes.
+				try {
+					size = (await this.fs.stat(filepath)).size;
+				} catch {
+					size = 0;
+				}
+			}
+			out.push({ path: filepath, size });
+		}
+		return out;
 	}
 
 	/**
@@ -1037,6 +1199,40 @@ function parseGitignore(text: string): string[] {
 		out.push(trimmed);
 	}
 	return out;
+}
+
+/**
+ * Split a list of sized changes into batches whose accumulated byte size stays
+ * at or below `limit`. Pure (no `this`) so it's unit-testable.
+ *
+ * Greedy first-fit in list order: keep adding to the current batch until the
+ * next file would push it over `limit`, then start a new batch. A file LARGER
+ * than `limit` becomes its own single-item batch — a blob can't be split, so
+ * that lone batch necessarily exceeds the limit (a known, unavoidable cap: one
+ * huge file still builds one packfile for itself). An empty input yields no
+ * batches; a single small change yields exactly one batch.
+ */
+export function chunkChanges<T extends { size: number }>(
+	changes: T[],
+	limit: number
+): T[][] {
+	const batches: T[][] = [];
+	let current: T[] = [];
+	let currentSize = 0;
+	for (const change of changes) {
+		// Start a new batch when the current one is non-empty and adding this
+		// file would exceed the limit. (An over-limit file on an empty batch
+		// still goes in alone — see the doc comment.)
+		if (current.length > 0 && currentSize + change.size > limit) {
+			batches.push(current);
+			current = [];
+			currentSize = 0;
+		}
+		current.push(change);
+		currentSize += change.size;
+	}
+	if (current.length > 0) batches.push(current);
+	return batches;
 }
 
 /**
