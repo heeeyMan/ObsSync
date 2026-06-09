@@ -18,6 +18,7 @@ import { t } from "./i18n";
 export interface GitHubUser {
 	login: string;
 	name: string | null;
+	email: string | null;
 }
 
 export interface GitHubRepo {
@@ -97,16 +98,81 @@ async function apiGet(url: string, token: string): Promise<unknown> {
 	return res.json;
 }
 
-/** GET /user → the authenticated user's login and display name. */
+/**
+ * GET /user → the authenticated user's login and display name, plus a
+ * best-effort email for prefilling the author fields.
+ *
+ * The primary `GET /user` call still throws a localized error on 401/403 — that
+ * is the token validation step. The email lookup, by contrast, is best-effort
+ * and must NEVER break authorization:
+ *   1. If `GET /user` returns a non-empty `email` (the public profile email),
+ *      use it.
+ *   2. Otherwise try `GET /user/emails`, which requires the `user:email` scope.
+ *      A token without that scope yields 403; that (and 401/404/network) is
+ *      swallowed here and we simply return `email: null`.
+ */
 export async function fetchGitHubUser(token: string): Promise<GitHubUser> {
 	const data = (await apiGet(`${API_BASE}/user`, token)) as {
 		login?: unknown;
 		name?: unknown;
+		email?: unknown;
 	};
+
+	let email = typeof data.email === "string" && data.email ? data.email : null;
+	if (!email) {
+		email = await fetchGitHubPrimaryEmail(token);
+	}
+
 	return {
 		login: typeof data.login === "string" ? data.login : "",
 		name: typeof data.name === "string" ? data.name : null,
+		email,
 	};
+}
+
+/**
+ * Best-effort `GET /user/emails`. This requires the `user:email` scope; a token
+ * without it gets a 403, which `apiGet` maps to `errBadToken`. We swallow *any*
+ * failure here (403/401/404/network/timeout) and return null so the email
+ * lookup can never block authorization — login, name, and the repo list must
+ * still come through.
+ *
+ * Picks the primary address (preferring a verified one); otherwise the first
+ * verified address; otherwise null. Tolerant of a non-array body / missing
+ * fields, mirroring {@link fetchGitHubRepos}.
+ */
+async function fetchGitHubPrimaryEmail(token: string): Promise<string | null> {
+	let data: unknown;
+	try {
+		data = await apiGet(`${API_BASE}/user/emails`, token);
+	} catch {
+		// Missing scope (403), bad token, not found, or network — ignore.
+		return null;
+	}
+
+	if (!Array.isArray(data)) return null;
+
+	const entries = data
+		.map((e) => {
+			const rec = e as { email?: unknown; primary?: unknown; verified?: unknown };
+			return {
+				email: typeof rec.email === "string" ? rec.email : "",
+				primary: rec.primary === true,
+				verified: rec.verified === true,
+			};
+		})
+		.filter((e) => e.email);
+
+	const primaryVerified = entries.find((e) => e.primary && e.verified);
+	if (primaryVerified) return primaryVerified.email;
+
+	const primary = entries.find((e) => e.primary);
+	if (primary) return primary.email;
+
+	const verified = entries.find((e) => e.verified);
+	if (verified) return verified.email;
+
+	return null;
 }
 
 /**

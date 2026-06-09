@@ -137,6 +137,12 @@ export class GitSyncSettingTab extends PluginSettingTab {
 					s.username = user.login;
 					// Reflect the autofilled username in the live field too.
 					usernameText?.setValue(user.login);
+					// Autofill the commit author from the GitHub profile.
+					// Name: profile name, falling back to the login.
+					s.authorName = user.name || user.login;
+					// Email: only overwrite when the profile exposes one;
+					// otherwise keep whatever the user already entered.
+					if (user.email) s.authorEmail = user.email;
 					this.repos = await fetchGitHubRepos(token);
 					// Keep the manual flag in sync: if the current URL matches a
 					// fetched repo, switch to dropdown mode automatically.
