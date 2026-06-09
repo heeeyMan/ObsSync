@@ -17,6 +17,7 @@ export default class GitSyncPlugin extends Plugin {
 	private statusTextEl!: HTMLElement;
 	private syncing = false;
 	private changeCount = 0;
+	private lastSyncError = false;
 	private autoSyncTimer: number | null = null;
 	private statusRefreshTimer: number | null = null;
 
@@ -105,8 +106,9 @@ export default class GitSyncPlugin extends Plugin {
 		}
 		if (this.settings.autoSyncEnabled) {
 			const ms = Math.max(1, this.settings.autoSyncInterval) * 60_000;
+			// Tracked manually (cleared here on re-apply and in onunload); don't
+			// also registerInterval, which would accumulate registrations.
 			this.autoSyncTimer = window.setInterval(() => void this.sync(true), ms);
-			this.registerInterval(this.autoSyncTimer);
 		}
 	}
 
@@ -125,6 +127,7 @@ export default class GitSyncPlugin extends Plugin {
 		}
 
 		this.syncing = true;
+		this.lastSyncError = false;
 		this.setStatus("syncing");
 		try {
 			const result = await this.git.sync(
@@ -153,7 +156,7 @@ export default class GitSyncPlugin extends Plugin {
 			} else {
 				console.error("GitSync sync failed", err);
 				new Notice(t("noticeSyncFailed", { msg: (err as Error).message }));
-				this.setStatus("error");
+				this.lastSyncError = true;
 			}
 		} finally {
 			this.syncing = false;
@@ -270,6 +273,11 @@ export default class GitSyncPlugin extends Plugin {
 
 	private async refreshStatus() {
 		if (this.syncing) return;
+		// Keep the error indicator sticky until the next sync attempt.
+		if (this.lastSyncError) {
+			this.setStatus("error");
+			return;
+		}
 		try {
 			this.changeCount = await this.git.countChanges();
 		} catch {

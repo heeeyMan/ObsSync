@@ -96,7 +96,9 @@ export class GitSyncSettingTab extends PluginSettingTab {
 					.setValue(s.remoteUrl)
 					.onChange(async (value) => {
 						s.remoteUrl = value.trim();
-						this.branchesFetched = false; // allow re-fetch for new remote
+						// New remote → drop the old branch list and allow re-fetch.
+						this.branchesFetched = false;
+						this.remoteBranches = [];
 						await this.plugin.saveSettings();
 					})
 			);
@@ -160,13 +162,22 @@ export class GitSyncSettingTab extends PluginSettingTab {
 			.setName(t("setIntervalName"))
 			.addText((text) => {
 				text.inputEl.type = "number";
+				text.inputEl.min = "1";
+				text.inputEl.step = "1";
 				text
 					.setValue(String(s.autoSyncInterval))
 					.onChange(async (value) => {
-						s.autoSyncInterval = Math.max(1, Number(value) || 10);
+						s.autoSyncInterval = Math.max(
+							1,
+							Math.floor(Number(value) || 10)
+						);
 						await this.plugin.saveSettings();
 						this.plugin.applyAutoSync();
 					});
+				// Re-sync the field to the stored (coerced) value on blur.
+				text.inputEl.addEventListener("blur", () =>
+					text.setValue(String(s.autoSyncInterval))
+				);
 			});
 		intervalEl = intervalSetting.settingEl;
 		intervalEl.toggleClass("gitsync-hidden", !s.autoSyncEnabled);

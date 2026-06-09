@@ -28,7 +28,6 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	// --- status bar ---
 	statusSyncing: { en: "syncing…", ru: "синхронизация…" },
 	statusError: { en: "error", ru: "ошибка" },
-	statusChanges: { en: "{n} change(s)", ru: "изменений: {n}" },
 	tipSyncing: { en: "GitSync: syncing…", ru: "GitSync: синхронизация…" },
 	tipError: {
 		en: "GitSync: last sync failed — click to retry",
@@ -248,7 +247,8 @@ export function t(key: keyof typeof STRINGS, vars?: Record<string, string | numb
 	let s = entry ? entry[current] ?? entry.en : String(key);
 	if (vars) {
 		for (const [k, v] of Object.entries(vars)) {
-			s = s.replace(`{${k}}`, String(v));
+			// Replace every occurrence (split/join avoids needing replaceAll).
+			s = s.split(`{${k}}`).join(String(v));
 		}
 	}
 	return s;
