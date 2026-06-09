@@ -176,6 +176,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 		en: "Push rejected: the remote changed during sync. Run Sync again.",
 		ru: "Отправка отклонена: сервер изменился во время синхронизации. Запустите синхронизацию снова.",
 	},
+	errPushRule: {
+		en: "GitHub rejected the push (branch protection or secret-scanning rule). Check Settings → Rules/Branches on GitHub, or sync to an unprotected branch.",
+		ru: "GitHub отклонил push (защита ветки или правило сканирования секретов). Проверьте Settings → Rules/Branches на GitHub или синхронизируйте в незащищённую ветку.",
+	},
 	errRestoreFailed: {
 		en: "Could not restore your deselected edits: {files}. Check disk space and recover them manually.",
 		ru: "Не удалось восстановить ваши невыбранные правки: {files}. Проверьте свободное место и восстановите их вручную.",
