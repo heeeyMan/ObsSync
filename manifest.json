@@ -1,9 +1,9 @@
 {
-	"id": "obssync",
-	"name": "ObsSync",
+	"id": "gitsync",
+	"name": "GitSync",
 	"version": "0.1.0",
 	"minAppVersion": "1.4.0",
-	"description": "Sync your vault with a Git repository (GitHub, HTTPS token) in one click, with conflict resolution. Works on desktop and mobile.",
+	"description": "Sync your vault with a Git repository (GitHub, HTTPS token) in one click, with conflict resolution. English and Russian UI. Works on desktop and mobile.",
 	"author": "alexandervasin",
 	"isDesktopOnly": false
 }

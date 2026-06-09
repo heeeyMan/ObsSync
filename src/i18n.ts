@@ -1,0 +1,244 @@
+/**
+ * Tiny i18n for GitSync. Strings are keyed; each key has an `en` and `ru`
+ * value. The active language is chosen from the plugin's "Language" setting,
+ * which defaults to following Obsidian's own UI language.
+ */
+export type Lang = "en" | "ru";
+export type LangPref = "auto" | Lang;
+
+const STRINGS: Record<string, Record<Lang, string>> = {
+	// --- ribbon / commands ---
+	ribbonSync: { en: "GitSync: Sync vault", ru: "GitSync: синхронизировать хранилище" },
+	ribbonReview: {
+		en: "GitSync: Review changes & sync",
+		ru: "GitSync: просмотреть изменения и синхронизировать",
+	},
+	cmdSync: { en: "Sync vault with Git", ru: "Синхронизировать хранилище с Git" },
+	cmdReview: {
+		en: "Review changes & sync",
+		ru: "Просмотреть изменения и синхронизировать",
+	},
+	cmdTest: { en: "Test connection to remote", ru: "Проверить соединение с сервером" },
+
+	// --- status-bar menu ---
+	menuSyncNow: { en: "Sync now", ru: "Синхронизировать сейчас" },
+	menuTest: { en: "Test connection", ru: "Проверить соединение" },
+	menuSettings: { en: "Open settings", ru: "Открыть настройки" },
+
+	// --- status bar ---
+	statusSyncing: { en: "syncing…", ru: "синхронизация…" },
+	statusError: { en: "error", ru: "ошибка" },
+	statusChanges: { en: "{n} change(s)", ru: "изменений: {n}" },
+	tipSyncing: { en: "GitSync: syncing…", ru: "GitSync: синхронизация…" },
+	tipError: {
+		en: "GitSync: last sync failed — click to retry",
+		ru: "GitSync: последняя синхронизация не удалась — нажмите, чтобы повторить",
+	},
+	tipChanges: {
+		en: "GitSync: {n} change(s) to sync · last sync {last} · click for options",
+		ru: "GitSync: изменений к синхронизации: {n} · последняя {last} · нажмите для меню",
+	},
+	tipClean: {
+		en: "GitSync: up to date · last sync {last} · click for options",
+		ru: "GitSync: актуально · последняя синхронизация {last} · нажмите для меню",
+	},
+	lastNever: { en: "never", ru: "никогда" },
+	lastJustNow: { en: "just now", ru: "только что" },
+	lastMin: { en: "{n} min ago", ru: "{n} мин назад" },
+	lastHour: { en: "{n} h ago", ru: "{n} ч назад" },
+	lastDay: { en: "{n} d ago", ru: "{n} дн назад" },
+
+	// --- sync notices ---
+	noticeInProgress: {
+		en: "GitSync: sync already in progress",
+		ru: "GitSync: синхронизация уже идёт",
+	},
+	noticeConfigure: {
+		en: "GitSync: configure remote URL and token in settings first",
+		ru: "GitSync: сначала укажите URL репозитория и токен в настройках",
+	},
+	noticeResult: { en: "GitSync: {parts}", ru: "GitSync: {parts}" },
+	resultUpToDate: { en: "already up to date", ru: "уже актуально" },
+	resultCommitted: { en: "committed", ru: "закоммичено" },
+	resultPulled: { en: "pulled", ru: "получено" },
+	resultPushed: { en: "pushed", ru: "отправлено" },
+	resultMerged: { en: "merged", ru: "слито" },
+	resultResolved: { en: "resolved", ru: "разрешено" },
+	noticeConflicts: {
+		en: "GitSync: {n} conflict(s) — resolve them in the dialog.",
+		ru: "GitSync: конфликтов: {n} — разрешите их в диалоге.",
+	},
+	noticeAborted: {
+		en: "GitSync: merge aborted, nothing changed",
+		ru: "GitSync: слияние отменено, изменений нет",
+	},
+	noticeSyncFailed: { en: "GitSync: sync failed — {msg}", ru: "GitSync: ошибка синхронизации — {msg}" },
+	noticeTesting: { en: "GitSync: testing connection…", ru: "GitSync: проверка соединения…" },
+	noticeConnected: {
+		en: "GitSync: connected. Remote branches: {branches}",
+		ru: "GitSync: подключено. Ветки на сервере: {branches}",
+	},
+	noticeConnFailed: {
+		en: "GitSync: connection failed — {msg}",
+		ru: "GitSync: ошибка подключения — {msg}",
+	},
+	noticeResolveFailed: {
+		en: "GitSync: resolve failed — {msg}",
+		ru: "GitSync: ошибка разрешения — {msg}",
+	},
+	branchesNone: { en: "(none)", ru: "(нет)" },
+
+	// --- progress (status bar during sync) ---
+	progStaging: { en: "Staging changes…", ru: "Подготовка изменений…" },
+	progCommitting: { en: "Committing {n} change(s)…", ru: "Коммит изменений: {n}…" },
+	progFetching: { en: "Fetching from remote…", ru: "Получение с сервера…" },
+	progMerging: { en: "Merging remote changes…", ru: "Слияние изменений…" },
+	progPushing: { en: "Pushing to remote…", ru: "Отправка на сервер…" },
+	progRemoteMoved: { en: "Remote moved — re-syncing…", ru: "Сервер изменился — повтор…" },
+	progApplying: { en: "Applying resolutions…", ru: "Применение решений…" },
+	progStagingMerge: { en: "Staging merge…", ru: "Подготовка слияния…" },
+	progMergeCommit: { en: "Creating merge commit…", ru: "Создание merge-коммита…" },
+	progInit: { en: "Initializing repository…", ru: "Инициализация репозитория…" },
+	progLinking: { en: "Linking remote…", ru: "Привязка сервера…" },
+	progCheckout: { en: "Checking out remote branch…", ru: "Переключение на ветку сервера…" },
+
+	// --- errors (friendlyError) ---
+	errAuth: {
+		en: "Authentication failed — check your token and its repository permissions.",
+		ru: "Ошибка авторизации — проверьте токен и его права на репозиторий.",
+	},
+	errNetwork: {
+		en: "Network error — check your connection and the remote URL.",
+		ru: "Сетевая ошибка — проверьте подключение и URL репозитория.",
+	},
+	errNotFound: {
+		en: "Remote or branch not found — check the URL and branch name.",
+		ru: "Репозиторий или ветка не найдены — проверьте URL и имя ветки.",
+	},
+	errPushRejected: {
+		en: "Push rejected: the remote changed during sync. Run Sync again.",
+		ru: "Отправка отклонена: сервер изменился во время синхронизации. Запустите синхронизацию снова.",
+	},
+
+	// --- settings ---
+	setRemoteName: { en: "Remote URL", ru: "URL репозитория" },
+	setRemoteDesc: {
+		en: "HTTPS URL of the Git repository, e.g. https://github.com/user/vault.git",
+		ru: "HTTPS-адрес Git-репозитория, напр. https://github.com/user/vault.git",
+	},
+	setBranchName: { en: "Branch", ru: "Ветка" },
+	setBranchDesc: { en: "Branch to sync against.", ru: "Ветка для синхронизации." },
+	headAuth: { en: "Authentication", ru: "Авторизация" },
+	setUserName: { en: "Username", ru: "Имя пользователя" },
+	setUserDesc: { en: "Your GitHub username.", ru: "Ваше имя пользователя GitHub." },
+	setTokenName: { en: "Personal Access Token", ru: "Персональный токен (PAT)" },
+	setTokenDesc: {
+		en: "Stored in plaintext in this plugin's data.json. Use a fine-grained token scoped to this repo.",
+		ru: "Хранится в открытом виде в data.json плагина. Используйте токен с доступом только к этому репозиторию.",
+	},
+	headCommits: { en: "Commits", ru: "Коммиты" },
+	setAuthorNameName: { en: "Author name", ru: "Имя автора" },
+	setAuthorEmailName: { en: "Author email", ru: "Email автора" },
+	setCommitMsgName: { en: "Commit message", ru: "Сообщение коммита" },
+	setCommitMsgDesc: {
+		en: "Template for sync commits. {{date}} is replaced with the current timestamp.",
+		ru: "Шаблон для коммитов. {{date}} заменяется текущей датой и временем.",
+	},
+	headAutoSync: { en: "Automatic sync", ru: "Автосинхронизация" },
+	setStartupName: { en: "Sync on startup", ru: "Синхронизация при запуске" },
+	setStartupDesc: {
+		en: "Run a sync once when Obsidian loads.",
+		ru: "Выполнять синхронизацию один раз при запуске Obsidian.",
+	},
+	setTimerName: { en: "Auto-sync on a timer", ru: "Автосинхронизация по таймеру" },
+	setTimerDesc: {
+		en: "Periodically sync in the background.",
+		ru: "Периодически синхронизировать в фоне.",
+	},
+	setIntervalName: {
+		en: "Auto-sync interval (minutes)",
+		ru: "Интервал автосинхронизации (минуты)",
+	},
+	setExcludeName: { en: "Excluded paths", ru: "Исключённые пути" },
+	setExcludeDesc: {
+		en: "One glob per line. Matching files are never committed or counted (e.g. noisy .obsidian state). Use * within a folder and ** across folders; a trailing / matches a whole folder.",
+		ru: "По одному шаблону на строку. Совпавшие файлы не коммитятся и не считаются (напр. служебные файлы .obsidian). * — внутри папки, ** — через папки; / в конце — вся папка.",
+	},
+	headRepo: { en: "Repository", ru: "Репозиторий" },
+	setInitName: { en: "Initialize / link repository", ru: "Инициализировать / привязать репозиторий" },
+	setInitDesc: {
+		en: "Set up Git in this vault: init if needed, link the remote above, fetch and check out its branch. Use this on a fresh vault.",
+		ru: "Настроить Git в этом хранилище: инициализировать, привязать репозиторий, получить и переключиться на его ветку. Для нового хранилища.",
+	},
+	setInitButton: { en: "Initialize", ru: "Инициализировать" },
+	setInitWorking: { en: "Working…", ru: "Выполняется…" },
+	noticeInitNeed: {
+		en: "GitSync: set remote URL and token first",
+		ru: "GitSync: сначала укажите URL и токен",
+	},
+	noticeInitReady: { en: "GitSync: repository ready", ru: "GitSync: репозиторий готов" },
+	noticeInitFailed: { en: "GitSync: init failed — {msg}", ru: "GitSync: ошибка инициализации — {msg}" },
+	setLangName: { en: "Language", ru: "Язык" },
+	setLangDesc: {
+		en: "Interface language. Auto follows Obsidian's language.",
+		ru: "Язык интерфейса. «Авто» следует языку Obsidian.",
+	},
+	langAuto: { en: "Auto", ru: "Авто" },
+	langEn: { en: "English", ru: "English" },
+	langRu: { en: "Русский", ru: "Русский" },
+
+	// --- conflict modal ---
+	cmTitle: { en: "Resolve {n} merge conflict(s)", ru: "Разрешите конфликты слияния: {n}" },
+	cmIntro: {
+		en: "For each file choose which version to keep, or edit the merged result manually.",
+		ru: "Для каждого файла выберите версию или отредактируйте результат вручную.",
+	},
+	cmLoading: { en: "Loading versions…", ru: "Загрузка версий…" },
+	cmFailed: { en: "Failed to read changes: {msg}", ru: "Не удалось прочитать изменения: {msg}" },
+	cmResolution: { en: "Resolution", ru: "Решение" },
+	cmOptManual: { en: "Edit manually", ru: "Редактировать вручную" },
+	cmOptLocal: { en: "Use local (ours)", ru: "Локальная версия" },
+	cmOptRemote: { en: "Use remote (theirs)", ru: "Версия с сервера" },
+	cmShow: { en: "Show local / remote", ru: "Показать локальную / серверную" },
+	cmDeleted: { en: "(file deleted)", ru: "(файл удалён)" },
+	cmResolve: { en: "Resolve & sync", ru: "Разрешить и синхронизировать" },
+	cmSyncing: { en: "Syncing…", ru: "Синхронизация…" },
+	cmCancel: { en: "Cancel (abort merge)", ru: "Отмена (прервать слияние)" },
+
+	// --- review modal ---
+	rmTitle: { en: "Review changes", ru: "Просмотр изменений" },
+	rmLoading: { en: "Loading changes…", ru: "Загрузка изменений…" },
+	rmFailed: { en: "Failed to read changes: {msg}", ru: "Не удалось прочитать изменения: {msg}" },
+	rmNothing: { en: "Nothing to commit — up to date.", ru: "Нечего коммитить — всё актуально." },
+	rmClose: { en: "Close", ru: "Закрыть" },
+	rmCount: { en: "{n} changed file(s)", ru: "изменённых файлов: {n}" },
+	rmSelectAll: { en: "Select all", ru: "Выбрать все" },
+	rmSelectNone: { en: "Select none", ru: "Снять все" },
+	rmSync: { en: "Sync {n} selected", ru: "Синхронизировать выбранные: {n}" },
+	rmCancel: { en: "Cancel", ru: "Отмена" },
+};
+
+let current: Lang = "en";
+
+/** Resolve and store the active language from the user's preference. */
+export function setLanguage(pref: LangPref): void {
+	if (pref === "en" || pref === "ru") {
+		current = pref;
+		return;
+	}
+	// Auto: follow Obsidian's UI language (stored in localStorage).
+	const obsidianLang = window.localStorage.getItem("language");
+	current = obsidianLang === "ru" ? "ru" : "en";
+}
+
+/** Translate a key, substituting `{name}` placeholders from `vars`. */
+export function t(key: keyof typeof STRINGS, vars?: Record<string, string | number>): string {
+	const entry = STRINGS[key];
+	let s = entry ? entry[current] ?? entry.en : String(key);
+	if (vars) {
+		for (const [k, v] of Object.entries(vars)) {
+			s = s.replace(`{${k}}`, String(v));
+		}
+	}
+	return s;
+}

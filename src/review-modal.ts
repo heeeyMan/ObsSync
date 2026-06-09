@@ -1,5 +1,6 @@
 import { App, ButtonComponent, Modal, Setting } from "obsidian";
 import { ChangeEntry, GitManager } from "./git";
+import { t } from "./i18n";
 
 const STATUS_LABEL: Record<ChangeEntry["status"], string> = {
 	added: "A",
@@ -26,21 +27,21 @@ export class ReviewModal extends Modal {
 
 	async onOpen() {
 		const { contentEl, titleEl } = this;
-		titleEl.setText("Review changes");
+		titleEl.setText(t("rmTitle"));
 
-		const loading = contentEl.createEl("p", { text: "Loading changes…" });
+		const loading = contentEl.createEl("p", { text: t("rmLoading") });
 		try {
 			this.entries = await this.git.listChanges();
 		} catch (err) {
-			loading.setText(`Failed to read changes: ${(err as Error).message}`);
+			loading.setText(t("rmFailed", { msg: (err as Error).message }));
 			return;
 		}
 		loading.remove();
 
 		if (this.entries.length === 0) {
-			contentEl.createEl("p", { text: "Nothing to commit — up to date." });
+			contentEl.createEl("p", { text: t("rmNothing") });
 			new Setting(contentEl).addButton((b) =>
-				b.setButtonText("Close").onClick(() => this.close())
+				b.setButtonText(t("rmClose")).onClick(() => this.close())
 			);
 			return;
 		}
@@ -48,21 +49,21 @@ export class ReviewModal extends Modal {
 		for (const e of this.entries) this.selected.add(e.path);
 
 		new Setting(contentEl)
-			.setName(`${this.entries.length} changed file(s)`)
+			.setName(t("rmCount", { n: this.entries.length }))
 			.addExtraButton((b) =>
 				b
 					.setIcon("check-square")
-					.setTooltip("Select all")
+					.setTooltip(t("rmSelectAll"))
 					.onClick(() => this.setAll(true))
 			)
 			.addExtraButton((b) =>
 				b
 					.setIcon("square")
-					.setTooltip("Select none")
+					.setTooltip(t("rmSelectNone"))
 					.onClick(() => this.setAll(false))
 			);
 
-		const list = contentEl.createDiv({ cls: "obssync-review-list" });
+		const list = contentEl.createDiv({ cls: "gitsync-review-list" });
 		for (const e of this.entries) {
 			this.renderRow(list, e);
 		}
@@ -77,13 +78,13 @@ export class ReviewModal extends Modal {
 				});
 			})
 			.addButton((b) =>
-				b.setButtonText("Cancel").onClick(() => this.close())
+				b.setButtonText(t("rmCancel")).onClick(() => this.close())
 			);
 		this.updateSyncButton();
 	}
 
 	private renderRow(parent: HTMLElement, entry: ChangeEntry) {
-		const row = parent.createDiv({ cls: "obssync-review-row" });
+		const row = parent.createDiv({ cls: "gitsync-review-row" });
 		const checkbox = row.createEl("input", { type: "checkbox" });
 		checkbox.checked = true;
 		checkbox.addEventListener("change", () => {
@@ -93,10 +94,10 @@ export class ReviewModal extends Modal {
 		});
 		row.dataset.path = entry.path;
 		row.createSpan({
-			cls: `obssync-badge obssync-badge--${entry.status}`,
+			cls: `gitsync-badge gitsync-badge--${entry.status}`,
 			text: STATUS_LABEL[entry.status],
 		});
-		row.createSpan({ cls: "obssync-review-path", text: entry.path });
+		row.createSpan({ cls: "gitsync-review-path", text: entry.path });
 		row.addEventListener("click", (evt) => {
 			if (evt.target === checkbox) return;
 			checkbox.checked = !checkbox.checked;
@@ -108,16 +109,14 @@ export class ReviewModal extends Modal {
 		this.selected.clear();
 		if (value) this.entries.forEach((e) => this.selected.add(e.path));
 		this.contentEl
-			.querySelectorAll<HTMLInputElement>(".obssync-review-row input")
+			.querySelectorAll<HTMLInputElement>(".gitsync-review-row input")
 			.forEach((cb) => (cb.checked = value));
 		this.updateSyncButton();
 	}
 
 	private updateSyncButton() {
 		const n = this.selected.size;
-		this.syncButton
-			?.setButtonText(`Sync ${n} selected`)
-			.setDisabled(n === 0);
+		this.syncButton?.setButtonText(t("rmSync", { n })).setDisabled(n === 0);
 	}
 
 	onClose() {

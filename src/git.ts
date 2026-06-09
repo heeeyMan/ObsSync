@@ -2,7 +2,8 @@ import * as git from "isomorphic-git";
 import { DataAdapter } from "obsidian";
 import { GitFs } from "./git-fs";
 import { obsidianHttpClient } from "./git-http";
-import type { ObsSyncSettings } from "./settings";
+import type { GitSyncSettings } from "./settings";
+import { t } from "./i18n";
 
 export interface SyncResult {
 	/** A local commit was created from working-tree changes. */
@@ -60,7 +61,7 @@ export class GitManager {
 
 	constructor(
 		adapter: DataAdapter,
-		private readonly getSettings: () => ObsSyncSettings
+		private readonly getSettings: () => GitSyncSettings
 	) {
 		this.fs = new GitFs(adapter);
 	}
@@ -146,7 +147,7 @@ export class GitManager {
 
 	private author() {
 		const s = this.getSettings();
-		return { name: s.authorName || "ObsSync", email: s.authorEmail || "" };
+		return { name: s.authorName || "GitSync", email: s.authorEmail || "" };
 	}
 
 	/**
@@ -173,12 +174,12 @@ export class GitManager {
 
 		try {
 			// 1. Stage the chosen changes (or all of them), then commit.
-			log("Staging changes…");
+			log(t("progStaging"));
 			const changed = await this.stageAll(
 				only ? new Set(only) : undefined
 			);
 			if (changed > 0) {
-				log(`Committing ${changed} change(s)…`);
+				log(t("progCommitting", { n: changed }));
 				await git.commit({
 					fs: this.fs,
 					dir: this.dir,
@@ -251,7 +252,7 @@ export class GitManager {
 		snapshot: Map<string, Uint8Array | null> | null = null
 	): Promise<void> {
 		const s = this.getSettings();
-		log("Fetching from remote…");
+		log(t("progFetching"));
 		await git.fetch({
 			...this.base(),
 			remote: "origin",
@@ -266,7 +267,7 @@ export class GitManager {
 		const localOid = await this.tryResolve(branch);
 		if (!remoteOid || !localOid || localOid === remoteOid) return;
 
-		log("Merging remote changes…");
+		log(t("progMerging"));
 		try {
 			const merge = await git.merge({
 				fs: this.fs,
@@ -317,13 +318,13 @@ export class GitManager {
 			const remoteOid = await this.tryResolve(remoteRef);
 			if (!localOid || localOid === remoteOid) return; // nothing to push
 			try {
-				log("Pushing to remote…");
+				log(t("progPushing"));
 				await this.doPush(branch);
 				result.pushed = true;
 				return;
 			} catch (err) {
 				if (err instanceof PushRejected && attempt < 2) {
-					log("Remote moved — re-syncing…");
+					log(t("progRemoteMoved"));
 					// May throw MergeConflict, which bubbles to the UI.
 					await this.fetchAndMerge(
 						branch,
@@ -335,9 +336,7 @@ export class GitManager {
 					continue;
 				}
 				if (err instanceof PushRejected) {
-					throw new Error(
-						"Push rejected: the remote changed during sync. Run Sync again."
-					);
+					throw new Error(t("errPushRejected"));
 				}
 				throw err;
 			}
@@ -387,7 +386,7 @@ export class GitManager {
 		const branch = s.branch || "main";
 		try {
 			if (!(await this.isRepo())) {
-				log("Initializing repository…");
+				log(t("progInit"));
 				await git.init({
 					fs: this.fs,
 					dir: this.dir,
@@ -395,7 +394,7 @@ export class GitManager {
 				});
 			}
 
-			log("Linking remote…");
+			log(t("progLinking"));
 			await git.addRemote({
 				fs: this.fs,
 				dir: this.dir,
@@ -404,7 +403,7 @@ export class GitManager {
 				force: true,
 			});
 
-			log("Fetching from remote…");
+			log(t("progFetching"));
 			await git.fetch({
 				...this.base(),
 				remote: "origin",
@@ -420,7 +419,7 @@ export class GitManager {
 			const localOid = await this.tryResolve(branch);
 			if (remoteOid && !localOid) {
 				// Fresh repo: adopt the remote branch as our starting point.
-				log("Checking out remote branch…");
+				log(t("progCheckout"));
 				await git.writeRef({
 					fs: this.fs,
 					dir: this.dir,
@@ -512,7 +511,7 @@ export class GitManager {
 		skipPaths: string[] = [],
 		restore: Map<string, Uint8Array | null> | null = null
 	): Promise<SyncResult> {
-		log("Applying resolutions…");
+		log(t("progApplying"));
 		for (const [filepath, res] of resolutions) {
 			if (res.type === "manual") {
 				await this.fs.writeFile(filepath, res.content);
@@ -531,12 +530,12 @@ export class GitManager {
 		// Stage resolved files + merge-brought files, but keep deselected local
 		// changes out. Resolved conflict files are always staged, even if the
 		// user had deselected them, since they're part of the merge.
-		log("Staging merge…");
+		log(t("progStagingMerge"));
 		const resolved = new Set(resolutions.keys());
 		const skip = new Set(skipPaths.filter((p) => !resolved.has(p)));
 		await this.stageAll(undefined, skip);
 
-		log("Creating merge commit…");
+		log(t("progMergeCommit"));
 		await git.commit({
 			fs: this.fs,
 			dir: this.dir,
@@ -548,14 +547,12 @@ export class GitManager {
 		// Restore deselected edits the merge overwrote in the working tree.
 		if (restore) await this.restoreSnapshot(restore);
 
-		log("Pushing to remote…");
+		log(t("progPushing"));
 		try {
 			await this.doPush(branch);
 		} catch (err) {
 			if (err instanceof PushRejected) {
-				throw new Error(
-					"Push rejected: the remote changed during sync. Run Sync again."
-				);
+				throw new Error(t("errPushRejected"));
 			}
 			throw friendlyError(err);
 		}
@@ -645,19 +642,13 @@ function friendlyError(err: unknown): Error {
 		) ||
 		(code === "HttpError" && /\b40[13]\b/.test(msg))
 	) {
-		return new Error(
-			"Authentication failed — check your token and its repository permissions."
-		);
+		return new Error(t("errAuth"));
 	}
 	if (/network|fetch failed|ENOTFOUND|getaddrinfo|ETIMEDOUT|timeout/i.test(msg)) {
-		return new Error(
-			"Network error — check your connection and the remote URL."
-		);
+		return new Error(t("errNetwork"));
 	}
 	if (/could not find|NotFoundError/i.test(msg) && /remote|ref/i.test(msg)) {
-		return new Error(
-			"Remote or branch not found — check the URL and branch name."
-		);
+		return new Error(t("errNotFound"));
 	}
 	return err instanceof Error ? err : new Error(msg);
 }

@@ -1,15 +1,16 @@
 import { Menu, Notice, Plugin, setIcon } from "obsidian";
 import {
 	DEFAULT_SETTINGS,
-	ObsSyncSettings,
-	ObsSyncSettingTab,
+	GitSyncSettings,
+	GitSyncSettingTab,
 } from "./settings";
 import { GitManager, MergeConflict } from "./git";
 import { ConflictModal } from "./conflict-modal";
 import { ReviewModal } from "./review-modal";
+import { setLanguage, t } from "./i18n";
 
-export default class ObsSyncPlugin extends Plugin {
-	settings!: ObsSyncSettings;
+export default class GitSyncPlugin extends Plugin {
+	settings!: GitSyncSettings;
 	git!: GitManager;
 	private statusBarEl!: HTMLElement;
 	private statusIconEl!: HTMLElement;
@@ -21,23 +22,24 @@ export default class ObsSyncPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+		setLanguage(this.settings.language);
 		this.git = new GitManager(this.app.vault.adapter, () => this.settings);
 
-		this.addRibbonIcon("refresh-cw", "ObsSync: Sync vault", () => {
+		this.addRibbonIcon("refresh-cw", t("ribbonSync"), () => {
 			void this.sync();
 		});
 
-		this.addRibbonIcon("list-checks", "ObsSync: Review changes & sync", () => {
+		this.addRibbonIcon("list-checks", t("ribbonReview"), () => {
 			this.openReview();
 		});
 
 		this.statusBarEl = this.addStatusBarItem();
-		this.statusBarEl.addClass("obssync-status-bar");
+		this.statusBarEl.addClass("gitsync-status-bar");
 		this.statusIconEl = this.statusBarEl.createSpan({
-			cls: "obssync-status-icon",
+			cls: "gitsync-status-icon",
 		});
 		this.statusTextEl = this.statusBarEl.createSpan({
-			cls: "obssync-status-text",
+			cls: "gitsync-status-text",
 		});
 		this.statusBarEl.addEventListener("click", (evt) =>
 			this.showStatusMenu(evt)
@@ -45,24 +47,24 @@ export default class ObsSyncPlugin extends Plugin {
 		this.setStatus("idle");
 
 		this.addCommand({
-			id: "obssync-sync",
-			name: "Sync vault with Git",
+			id: "sync",
+			name: t("cmdSync"),
 			callback: () => void this.sync(),
 		});
 
 		this.addCommand({
-			id: "obssync-review",
-			name: "Review changes & sync",
+			id: "review",
+			name: t("cmdReview"),
 			callback: () => this.openReview(),
 		});
 
 		this.addCommand({
-			id: "obssync-test-connection",
-			name: "Test connection to remote",
+			id: "test-connection",
+			name: t("cmdTest"),
 			callback: () => void this.testConnection(),
 		});
 
-		this.addSettingTab(new ObsSyncSettingTab(this.app, this));
+		this.addSettingTab(new GitSyncSettingTab(this.app, this));
 
 		// Keep the status-bar change counter fresh as the vault is edited.
 		const onVaultChange = () => this.scheduleStatusRefresh();
@@ -92,6 +94,7 @@ export default class ObsSyncPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+		setLanguage(this.settings.language);
 	}
 
 	/** (Re)start the auto-sync timer based on current settings. */
@@ -113,14 +116,11 @@ export default class ObsSyncPlugin extends Plugin {
 	 */
 	async sync(silent = false, only?: string[]): Promise<void> {
 		if (this.syncing) {
-			if (!silent) new Notice("ObsSync: sync already in progress");
+			if (!silent) new Notice(t("noticeInProgress"));
 			return;
 		}
 		if (!this.settings.remoteUrl || !this.settings.token) {
-			if (!silent)
-				new Notice(
-					"ObsSync: configure remote URL and token in settings first"
-				);
+			if (!silent) new Notice(t("noticeConfigure"));
 			return;
 		}
 
@@ -133,24 +133,26 @@ export default class ObsSyncPlugin extends Plugin {
 			);
 			await this.markSynced();
 			const parts: string[] = [];
-			if (result.committed) parts.push("committed");
-			if (result.pulled) parts.push("pulled");
-			if (result.pushed) parts.push("pushed");
+			if (result.committed) parts.push(t("resultCommitted"));
+			if (result.pulled) parts.push(t("resultPulled"));
+			if (result.pushed) parts.push(t("resultPushed"));
 			if (parts.length || !silent) {
 				new Notice(
-					`ObsSync: ${parts.length ? parts.join(", ") : "already up to date"}`
+					t("noticeResult", {
+						parts: parts.length
+							? parts.join(", ")
+							: t("resultUpToDate"),
+					})
 				);
 			}
 		} catch (err) {
 			if (err instanceof MergeConflict) {
-				console.warn("ObsSync merge conflict", err.files);
-				new Notice(
-					`ObsSync: ${err.files.length} conflict(s) — resolve them in the dialog.`
-				);
+				console.warn("GitSync merge conflict", err.files);
+				new Notice(t("noticeConflicts", { n: err.files.length }));
 				this.openConflictModal(err);
 			} else {
-				console.error("ObsSync sync failed", err);
-				new Notice(`ObsSync: sync failed — ${(err as Error).message}`);
+				console.error("GitSync sync failed", err);
+				new Notice(t("noticeSyncFailed", { msg: (err as Error).message }));
 				this.setStatus("error");
 			}
 		} finally {
@@ -161,7 +163,7 @@ export default class ObsSyncPlugin extends Plugin {
 
 	private openReview() {
 		if (!this.settings.remoteUrl || !this.settings.token) {
-			new Notice("ObsSync: configure remote URL and token in settings first");
+			new Notice(t("noticeConfigure"));
 			return;
 		}
 		new ReviewModal(this.app, this.git, (paths) => {
@@ -174,25 +176,25 @@ export default class ObsSyncPlugin extends Plugin {
 		const menu = new Menu();
 		menu.addItem((i) =>
 			i
-				.setTitle("Sync now")
+				.setTitle(t("menuSyncNow"))
 				.setIcon("refresh-cw")
 				.onClick(() => void this.sync())
 		);
 		menu.addItem((i) =>
 			i
-				.setTitle("Review changes & sync")
+				.setTitle(t("cmdReview"))
 				.setIcon("list-checks")
 				.onClick(() => this.openReview())
 		);
 		menu.addItem((i) =>
 			i
-				.setTitle("Test connection")
+				.setTitle(t("menuTest"))
 				.setIcon("plug")
 				.onClick(() => void this.testConnection())
 		);
 		menu.addItem((i) =>
 			i
-				.setTitle("Open settings")
+				.setTitle(t("menuSettings"))
 				.setIcon("settings")
 				.onClick(() => this.openSettings())
 		);
@@ -217,13 +219,17 @@ export default class ObsSyncPlugin extends Plugin {
 			async (result) => {
 				await this.markSynced();
 				const parts: string[] = [];
-				if (result.committed) parts.push("merged");
-				if (result.pushed) parts.push("pushed");
-				new Notice(`ObsSync: ${parts.join(", ") || "resolved"}`);
+				if (result.committed) parts.push(t("resultMerged"));
+				if (result.pushed) parts.push(t("resultPushed"));
+				new Notice(
+					t("noticeResult", {
+						parts: parts.join(", ") || t("resultResolved"),
+					})
+				);
 				await this.refreshStatus();
 			},
 			async () => {
-				new Notice("ObsSync: merge aborted, nothing changed");
+				new Notice(t("noticeAborted"));
 				await this.refreshStatus();
 			}
 		).open();
@@ -231,20 +237,20 @@ export default class ObsSyncPlugin extends Plugin {
 
 	async testConnection(): Promise<void> {
 		if (!this.settings.remoteUrl || !this.settings.token) {
-			new Notice("ObsSync: configure remote URL and token in settings first");
+			new Notice(t("noticeConfigure"));
 			return;
 		}
-		new Notice("ObsSync: testing connection…");
+		new Notice(t("noticeTesting"));
 		try {
 			const branches = await this.git.testConnection();
 			new Notice(
-				`ObsSync: connected. Remote branches: ${
-					branches.join(", ") || "(none)"
-				}`
+				t("noticeConnected", {
+					branches: branches.join(", ") || t("branchesNone"),
+				})
 			);
 		} catch (err) {
-			console.error("ObsSync connection test failed", err);
-			new Notice(`ObsSync: connection failed — ${(err as Error).message}`);
+			console.error("GitSync connection test failed", err);
+			new Notice(t("noticeConnFailed", { msg: (err as Error).message }));
 		}
 	}
 
@@ -274,24 +280,24 @@ export default class ObsSyncPlugin extends Plugin {
 
 	private setStatus(state: "idle" | "syncing" | "error") {
 		this.statusBarEl.removeClass(
-			"obssync-status-bar--syncing",
-			"obssync-status-bar--error"
+			"gitsync-status-bar--syncing",
+			"gitsync-status-bar--error"
 		);
 		let icon: string;
 		let text: string;
 		let tooltip: string;
 		switch (state) {
 			case "syncing":
-				this.statusBarEl.addClass("obssync-status-bar--syncing");
+				this.statusBarEl.addClass("gitsync-status-bar--syncing");
 				icon = "refresh-cw";
-				text = "syncing…";
-				tooltip = "ObsSync: syncing…";
+				text = t("statusSyncing");
+				tooltip = t("tipSyncing");
 				break;
 			case "error":
-				this.statusBarEl.addClass("obssync-status-bar--error");
+				this.statusBarEl.addClass("gitsync-status-bar--error");
 				icon = "alert-triangle";
-				text = "error";
-				tooltip = "ObsSync: last sync failed — click to retry";
+				text = t("statusError");
+				tooltip = t("tipError");
 				break;
 			default: {
 				const n = this.changeCount;
@@ -299,13 +305,11 @@ export default class ObsSyncPlugin extends Plugin {
 				if (n > 0) {
 					icon = "arrow-up-circle";
 					text = String(n);
-					tooltip = `ObsSync: ${n} change${
-						n === 1 ? "" : "s"
-					} to sync · last sync ${last} · click for options`;
+					tooltip = t("tipChanges", { n, last });
 				} else {
 					icon = "check-circle";
 					text = "";
-					tooltip = `ObsSync: up to date · last sync ${last} · click for options`;
+					tooltip = t("tipClean", { last });
 				}
 			}
 		}
@@ -317,12 +321,12 @@ export default class ObsSyncPlugin extends Plugin {
 
 /** Human-readable "time ago" for the status-bar tooltip. */
 function formatLastSync(epochMs: number): string {
-	if (!epochMs) return "never";
+	if (!epochMs) return t("lastNever");
 	const secs = Math.floor((Date.now() - epochMs) / 1000);
-	if (secs < 60) return "just now";
+	if (secs < 60) return t("lastJustNow");
 	const mins = Math.floor(secs / 60);
-	if (mins < 60) return `${mins} min ago`;
+	if (mins < 60) return t("lastMin", { n: mins });
 	const hours = Math.floor(mins / 60);
-	if (hours < 24) return `${hours} h ago`;
-	return `${Math.floor(hours / 24)} d ago`;
+	if (hours < 24) return t("lastHour", { n: hours });
+	return t("lastDay", { n: Math.floor(hours / 24) });
 }

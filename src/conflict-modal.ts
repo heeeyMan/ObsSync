@@ -5,6 +5,7 @@ import {
 	Resolution,
 	SyncResult,
 } from "./git";
+import { t } from "./i18n";
 
 type Choice = "local" | "remote" | "manual";
 
@@ -37,14 +38,10 @@ export class ConflictModal extends Modal {
 
 	async onOpen() {
 		const { contentEl, titleEl } = this;
-		titleEl.setText(
-			`Resolve ${this.conflict.files.length} merge conflict(s)`
-		);
-		contentEl.createEl("p", {
-			text: "For each file choose which version to keep, or edit the merged result manually.",
-		});
+		titleEl.setText(t("cmTitle", { n: this.conflict.files.length }));
+		contentEl.createEl("p", { text: t("cmIntro") });
 
-		const loading = contentEl.createEl("p", { text: "Loading versions…" });
+		const loading = contentEl.createEl("p", { text: t("cmLoading") });
 		for (const filepath of this.conflict.files) {
 			const [ours, theirs, working] = await Promise.all([
 				this.git.readVersion(this.conflict.oursOid, filepath),
@@ -68,12 +65,12 @@ export class ConflictModal extends Modal {
 		new Setting(contentEl)
 			.addButton((b) =>
 				b
-					.setButtonText("Resolve & sync")
+					.setButtonText(t("cmResolve"))
 					.setCta()
 					.onClick(() => void this.resolve(b.buttonEl))
 			)
 			.addButton((b) =>
-				b.setButtonText("Cancel (abort merge)").onClick(() => void this.cancel())
+				b.setButtonText(t("cmCancel")).onClick(() => void this.cancel())
 			);
 	}
 
@@ -82,7 +79,7 @@ export class ConflictModal extends Modal {
 
 		const editor = createDiv();
 		const textarea = editor.createEl("textarea", {
-			cls: "obssync-conflict-editor",
+			cls: "gitsync-conflict-editor",
 		});
 		textarea.value = state.manual;
 		textarea.addEventListener("input", () => {
@@ -90,16 +87,16 @@ export class ConflictModal extends Modal {
 		});
 
 		new Setting(parent)
-			.setName("Resolution")
+			.setName(t("cmResolution"))
 			.addDropdown((dd) => {
-				dd.addOption("manual", "Edit manually")
-					.addOption("local", "Use local (ours)")
-					.addOption("remote", "Use remote (theirs)")
+				dd.addOption("manual", t("cmOptManual"))
+					.addOption("local", t("cmOptLocal"))
+					.addOption("remote", t("cmOptRemote"))
 					.setValue(state.choice)
 					.onChange((v) => {
 						state.choice = v as Choice;
 						editor.toggleClass(
-							"obssync-hidden",
+							"gitsync-hidden",
 							state.choice !== "manual"
 						);
 					});
@@ -107,11 +104,12 @@ export class ConflictModal extends Modal {
 
 		// Read-only preview of both sides.
 		const details = parent.createEl("details");
-		details.createEl("summary", { text: "Show local / remote" });
-		const pre = details.createEl("pre", { cls: "obssync-conflict-preview" });
+		details.createEl("summary", { text: t("cmShow") });
+		const pre = details.createEl("pre", { cls: "gitsync-conflict-preview" });
+		const del = t("cmDeleted");
 		pre.setText(
-			`===== LOCAL (ours) =====\n${state.ours ?? "(file deleted)"}\n\n` +
-				`===== REMOTE (theirs) =====\n${state.theirs ?? "(file deleted)"}`
+			`===== ${t("cmOptLocal")} =====\n${state.ours ?? del}\n\n` +
+				`===== ${t("cmOptRemote")} =====\n${state.theirs ?? del}`
 		);
 
 		parent.appendChild(editor);
@@ -119,7 +117,7 @@ export class ConflictModal extends Modal {
 
 	private async resolve(button: HTMLButtonElement) {
 		button.disabled = true;
-		button.setText("Syncing…");
+		button.setText(t("cmSyncing"));
 		try {
 			const resolutions = new Map<string, Resolution>();
 			for (const s of this.states) {
@@ -145,10 +143,10 @@ export class ConflictModal extends Modal {
 			this.onResolved(result);
 			this.close();
 		} catch (err) {
-			console.error("ObsSync completeMerge failed", err);
-			new Notice(`ObsSync: resolve failed — ${(err as Error).message}`);
+			console.error("GitSync completeMerge failed", err);
+			new Notice(t("noticeResolveFailed", { msg: (err as Error).message }));
 			button.disabled = false;
-			button.setText("Resolve & sync");
+			button.setText(t("cmResolve"));
 		}
 	}
 
@@ -157,7 +155,7 @@ export class ConflictModal extends Modal {
 		try {
 			await this.git.abortMerge(this.conflict.branch);
 		} catch (err) {
-			console.error("ObsSync abortMerge failed", err);
+			console.error("GitSync abortMerge failed", err);
 		}
 		this.onAborted();
 		this.close();
@@ -169,7 +167,7 @@ export class ConflictModal extends Modal {
 		if (!this.finished) {
 			void this.git.abortMerge(this.conflict.branch).then(
 				() => this.onAborted(),
-				(err) => console.error("ObsSync abortMerge failed", err)
+				(err) => console.error("GitSync abortMerge failed", err)
 			);
 		}
 	}

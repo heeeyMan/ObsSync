@@ -1,7 +1,8 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
-import type ObsSyncPlugin from "./main";
+import type GitSyncPlugin from "./main";
+import { LangPref, t } from "./i18n";
 
-export interface ObsSyncSettings {
+export interface GitSyncSettings {
 	/** HTTPS clone URL of the remote, e.g. https://github.com/user/repo.git */
 	remoteUrl: string;
 	/** Branch to sync against. */
@@ -24,11 +25,13 @@ export interface ObsSyncSettings {
 	syncOnStartup: boolean;
 	/** Epoch ms of the last successful sync (0 = never). Maintained by the plugin. */
 	lastSyncAt: number;
-	/** Newline-separated glob patterns of files ObsSync should never sync. */
+	/** Newline-separated glob patterns of files GitSync should never sync. */
 	excludePaths: string;
+	/** Interface language ("auto" follows Obsidian). */
+	language: LangPref;
 }
 
-export const DEFAULT_SETTINGS: ObsSyncSettings = {
+export const DEFAULT_SETTINGS: GitSyncSettings = {
 	remoteUrl: "",
 	branch: "main",
 	authorName: "",
@@ -46,12 +49,13 @@ export const DEFAULT_SETTINGS: ObsSyncSettings = {
 		".DS_Store",
 		".trash/",
 	].join("\n"),
+	language: "auto",
 };
 
-export class ObsSyncSettingTab extends PluginSettingTab {
-	plugin: ObsSyncPlugin;
+export class GitSyncSettingTab extends PluginSettingTab {
+	plugin: GitSyncPlugin;
 
-	constructor(app: App, plugin: ObsSyncPlugin) {
+	constructor(app: App, plugin: GitSyncPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -61,8 +65,8 @@ export class ObsSyncSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName("Remote URL")
-			.setDesc("HTTPS URL of the Git repository, e.g. https://github.com/user/vault.git")
+			.setName(t("setRemoteName"))
+			.setDesc(t("setRemoteDesc"))
 			.addText((text) =>
 				text
 					.setPlaceholder("https://github.com/user/vault.git")
@@ -74,8 +78,8 @@ export class ObsSyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Branch")
-			.setDesc("Branch to sync against.")
+			.setName(t("setBranchName"))
+			.setDesc(t("setBranchDesc"))
 			.addText((text) =>
 				text
 					.setPlaceholder("main")
@@ -86,11 +90,11 @@ export class ObsSyncSettingTab extends PluginSettingTab {
 					})
 			);
 
-		containerEl.createEl("h3", { text: "Authentication" });
+		containerEl.createEl("h3", { text: t("headAuth") });
 
 		new Setting(containerEl)
-			.setName("Username")
-			.setDesc("Your GitHub username.")
+			.setName(t("setUserName"))
+			.setDesc(t("setUserDesc"))
 			.addText((text) =>
 				text
 					.setValue(this.plugin.settings.username)
@@ -101,8 +105,8 @@ export class ObsSyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Personal Access Token")
-			.setDesc("Stored in plaintext in this plugin's data.json. Use a fine-grained token scoped to this repo.")
+			.setName(t("setTokenName"))
+			.setDesc(t("setTokenDesc"))
 			.addText((text) => {
 				text
 					.setPlaceholder("ghp_...")
@@ -114,10 +118,10 @@ export class ObsSyncSettingTab extends PluginSettingTab {
 				text.inputEl.type = "password";
 			});
 
-		containerEl.createEl("h3", { text: "Commits" });
+		containerEl.createEl("h3", { text: t("headCommits") });
 
 		new Setting(containerEl)
-			.setName("Author name")
+			.setName(t("setAuthorNameName"))
 			.addText((text) =>
 				text
 					.setValue(this.plugin.settings.authorName)
@@ -128,7 +132,7 @@ export class ObsSyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Author email")
+			.setName(t("setAuthorEmailName"))
 			.addText((text) =>
 				text
 					.setValue(this.plugin.settings.authorEmail)
@@ -139,8 +143,8 @@ export class ObsSyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Commit message")
-			.setDesc("Template for sync commits. {{date}} is replaced with the current timestamp.")
+			.setName(t("setCommitMsgName"))
+			.setDesc(t("setCommitMsgDesc"))
 			.addText((text) =>
 				text
 					.setValue(this.plugin.settings.commitMessage)
@@ -150,13 +154,13 @@ export class ObsSyncSettingTab extends PluginSettingTab {
 					})
 			);
 
-		containerEl.createEl("h3", { text: "Automatic sync" });
+		containerEl.createEl("h3", { text: t("headAutoSync") });
 
 		new Setting(containerEl)
-			.setName("Sync on startup")
-			.setDesc("Run a sync once when Obsidian loads.")
-			.addToggle((t) =>
-				t
+			.setName(t("setStartupName"))
+			.setDesc(t("setStartupDesc"))
+			.addToggle((tg) =>
+				tg
 					.setValue(this.plugin.settings.syncOnStartup)
 					.onChange(async (value) => {
 						this.plugin.settings.syncOnStartup = value;
@@ -165,10 +169,10 @@ export class ObsSyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Auto-sync on a timer")
-			.setDesc("Periodically sync in the background.")
-			.addToggle((t) =>
-				t
+			.setName(t("setTimerName"))
+			.setDesc(t("setTimerDesc"))
+			.addToggle((tg) =>
+				tg
 					.setValue(this.plugin.settings.autoSyncEnabled)
 					.onChange(async (value) => {
 						this.plugin.settings.autoSyncEnabled = value;
@@ -178,7 +182,7 @@ export class ObsSyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Auto-sync interval (minutes)")
+			.setName(t("setIntervalName"))
 			.addText((text) => {
 				text.inputEl.type = "number";
 				text
@@ -192,10 +196,8 @@ export class ObsSyncSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
-			.setName("Excluded paths")
-			.setDesc(
-				"One glob per line. Matching files are never committed or counted (e.g. noisy .obsidian state). Use * within a folder and ** across folders; a trailing / matches a whole folder."
-			)
+			.setName(t("setExcludeName"))
+			.setDesc(t("setExcludeDesc"))
 			.addTextArea((ta) => {
 				ta.setValue(this.plugin.settings.excludePaths).onChange(
 					async (value) => {
@@ -204,43 +206,57 @@ export class ObsSyncSettingTab extends PluginSettingTab {
 					}
 				);
 				ta.inputEl.rows = 6;
-				ta.inputEl.addClass("obssync-exclude-textarea");
+				ta.inputEl.addClass("gitsync-exclude-textarea");
 			});
 
-		containerEl.createEl("h3", { text: "Repository" });
+		containerEl.createEl("h3", { text: t("headRepo") });
 
 		new Setting(containerEl)
-			.setName("Initialize / link repository")
-			.setDesc(
-				"Set up Git in this vault: init if needed, link the remote above, fetch and check out its branch. Use this on a fresh vault."
-			)
+			.setName(t("setLangName"))
+			.setDesc(t("setLangDesc"))
+			.addDropdown((dd) =>
+				dd
+					.addOption("auto", t("langAuto"))
+					.addOption("en", t("langEn"))
+					.addOption("ru", t("langRu"))
+					.setValue(this.plugin.settings.language)
+					.onChange(async (value) => {
+						this.plugin.settings.language = value as LangPref;
+						await this.plugin.saveSettings();
+						this.display(); // re-render in the new language
+					})
+			);
+
+		new Setting(containerEl)
+			.setName(t("setInitName"))
+			.setDesc(t("setInitDesc"))
 			.addButton((b) =>
 				b
-					.setButtonText("Initialize")
+					.setButtonText(t("setInitButton"))
 					.setWarning()
 					.onClick(async () => {
 						if (
 							!this.plugin.settings.remoteUrl ||
 							!this.plugin.settings.token
 						) {
-							new Notice(
-								"ObsSync: set remote URL and token first"
-							);
+							new Notice(t("noticeInitNeed"));
 							return;
 						}
-						b.setDisabled(true).setButtonText("Working…");
+						b.setDisabled(true).setButtonText(t("setInitWorking"));
 						try {
 							await this.plugin.git.initialize((msg) =>
-								new Notice(`ObsSync: ${msg}`)
+								new Notice(`GitSync: ${msg}`)
 							);
-							new Notice("ObsSync: repository ready");
+							new Notice(t("noticeInitReady"));
 						} catch (err) {
-							console.error("ObsSync initialize failed", err);
+							console.error("GitSync initialize failed", err);
 							new Notice(
-								`ObsSync: init failed — ${(err as Error).message}`
+								t("noticeInitFailed", {
+									msg: (err as Error).message,
+								})
 							);
 						} finally {
-							b.setDisabled(false).setButtonText("Initialize");
+							b.setDisabled(false).setButtonText(t("setInitButton"));
 						}
 					})
 			);
