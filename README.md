@@ -5,9 +5,21 @@ resolution, on **desktop and mobile**. Push and pull your whole vault to a Git
 remote (GitHub via HTTPS token) with a single button — and pick exactly what
 goes into each commit.
 
-Git Vault Sync is a pure-JavaScript plugin built on
-[isomorphic-git](https://isomorphic-git.org), so it needs no system `git` and
+Git Vault Sync is a pure-JavaScript plugin, so it needs no system `git` and
 works on Android/iOS as well as desktop.
+
+## Two sync engines
+
+There's a **Sync engine** setting (`Auto` / `Git` / `GitHub API`); `Auto` picks
+the right one per platform:
+
+- **Desktop → Git engine** ([isomorphic-git](https://isomorphic-git.org)): full
+  local history and true two-parent merges.
+- **Mobile → GitHub API engine** (Git Data API): transfers files one blob at a
+  time instead of a whole packfile, so it syncs large repos on a phone without
+  running out of memory. Selective sync / commit preview are git-engine only.
+
+Both push and pull to the same GitHub remote, so all your devices stay in sync.
 
 ## Features
 
