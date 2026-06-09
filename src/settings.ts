@@ -51,12 +51,9 @@ export const DEFAULT_SETTINGS: GitSyncSettings = {
 	autoSyncInterval: 10,
 	syncOnStartup: false,
 	lastSyncAt: 0,
-	excludePaths: [
-		".obsidian/workspace.json",
-		".obsidian/workspace-mobile.json",
-		".DS_Store",
-		".trash/",
-	].join("\n"),
+	// Default workspace excludes are config-dir dependent and applied at
+	// first run in loadSettings() (the config folder is not always ".obsidian").
+	excludePaths: [".DS_Store", ".trash/"].join("\n"),
 	language: "auto",
 };
 
