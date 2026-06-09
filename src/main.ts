@@ -7,12 +7,16 @@ import {
 import { GitManager, MergeConflict } from "./git";
 import { ConflictModal } from "./conflict-modal";
 import { ReviewModal } from "./review-modal";
-import { dryRunPull, parseGitHubRepo } from "./github-sync";
+import { apiSync, dryRunPull, parseGitHubRepo } from "./github-sync";
 import { setLanguage, t } from "./i18n";
 
 /** Vault-root markdown log for the experimental API-pull diagnostic. It is
  *  rewritten in full at each stage so the last line survives a mid-run crash. */
 const APITEST_LOG_FILE = "GitVaultSync-apitest.md";
+
+/** Vault-root markdown log for the experimental API SYNC (pull+push). Rewritten
+ *  in full at each stage so the last line survives a mid-run crash. */
+const APISYNC_LOG_FILE = "GitVaultSync-apisync.md";
 
 export default class GitSyncPlugin extends Plugin {
 	settings!: GitSyncSettings;
@@ -52,6 +56,14 @@ export default class GitSyncPlugin extends Plugin {
 		// mobile (no command palette hunting); the command below still exists too.
 		this.addRibbonIcon("flask-conical", t("cmdApiPullTest"), () => {
 			void this.apiPullTest();
+		});
+
+		// Experimental REAL bidirectional sync over the Git Data API. This one
+		// WRITES to the vault and PUSHES to the remote — run it on a test repo
+		// first. A ribbon icon is the most reliable trigger on mobile; the
+		// command below exists too.
+		this.addRibbonIcon("refresh-cw-off", t("cmdApiSync"), () => {
+			void this.apiSyncTest();
 		});
 
 		this.statusBarEl = this.addStatusBarItem();
@@ -97,6 +109,12 @@ export default class GitSyncPlugin extends Plugin {
 			id: "api-pull-test",
 			name: t("cmdApiPullTest"),
 			callback: () => void this.apiPullTest(),
+		});
+
+		this.addCommand({
+			id: "api-sync",
+			name: t("cmdApiSync"),
+			callback: () => void this.apiSyncTest(),
 		});
 
 		this.addSettingTab(new GitSyncSettingTab(this.app, this));
@@ -507,6 +525,162 @@ export default class GitSyncPlugin extends Plugin {
 			await log(`ERROR: ${e?.message ?? String(err)}`);
 			if (e?.stack) await log(`STACK: ${e.stack}`);
 			new Notice(t("apiPullFailed", { msg: e?.message ?? String(err) }));
+		} finally {
+			progressNotice?.hide();
+		}
+	}
+
+	/**
+	 * EXPERIMENTAL real bidirectional sync over the Git Data API (the new engine
+	 * in github-sync.ts). Unlike {@link apiPullTest}, this one WRITES pulled
+	 * changes into the vault and PUSHES local changes to the remote — run it on a
+	 * test repo first.
+	 *
+	 * Like apiPullTest, the authoritative record is a crash-surviving markdown
+	 * log at the vault root ({@link APISYNC_LOG_FILE}): each key stage rewrites
+	 * the whole file and is awaited before the next heavy step, so if the app is
+	 * killed mid-run the last line shows how far we got. The PAT is never logged.
+	 */
+	async apiSyncTest(): Promise<void> {
+		const logPath = APISYNC_LOG_FILE;
+		const lines: string[] = [];
+		const stamp = () => new Date().toISOString();
+		const log = async (line: string) => {
+			lines.push(`- ${stamp()}  ${line}`);
+			try {
+				await this.app.vault.adapter.write(
+					logPath,
+					`# Git Vault Sync — API sync (experimental)\n\n${lines.join(
+						"\n"
+					)}\n`
+				);
+			} catch (e) {
+				console.error("Git Vault Sync apiSyncTest log write failed", e);
+			}
+		};
+
+		// Immediate, unmissable proof the command fired — Notice + on-disk
+		// STARTED line — BEFORE any validation or network call.
+		new Notice(t("apiSyncStarting"), 0);
+		await log("STARTED");
+
+		let progressNotice: Notice | null = null;
+		try {
+			if (!this.settings.remoteUrl || !this.settings.token) {
+				await log("ERROR: remote URL or token not configured");
+				new Notice(t("errNoRemote"));
+				return;
+			}
+			const parsed = parseGitHubRepo(this.settings.remoteUrl);
+			if (!parsed) {
+				await log("ERROR: cannot parse GitHub owner/repo from remote URL");
+				new Notice(t("apiPullBadUrl"));
+				return;
+			}
+			const branch = this.settings.branch || "main";
+			// Params WITHOUT the token.
+			await log(
+				`PARAMS: owner=${parsed.owner}, repo=${parsed.repo}, branch=${branch}`
+			);
+
+			// Persistent, updatable progress Notice (visible on mobile where the
+			// status bar is hidden). Hidden in `finally`.
+			progressNotice = new Notice(t("apiSyncStarting"), 0);
+
+			// excluded predicate. v1 scope (see report): skip the config dir
+			// (usually .obsidian), the repo's own .git, the conflicts staging
+			// folder, our diagnostic logs, and this plugin's data.json (the PAT).
+			// Full settings.excludePaths / .gitignore handling comes later.
+			const configDir = this.app.vault.configDir;
+			const dataJson = `${this.manifest.dir ?? ""}/data.json`.replace(
+				/^\/+/,
+				""
+			);
+			const excluded = (p: string): boolean => {
+				const path = p.replace(/^\/+/, "");
+				if (!path) return true;
+				if (
+					path === configDir ||
+					path.startsWith(`${configDir}/`)
+				)
+					return true;
+				if (path === ".git" || path.startsWith(".git/")) return true;
+				if (path.startsWith("_conflicts/")) return true;
+				if (
+					path === APITEST_LOG_FILE ||
+					path === APISYNC_LOG_FILE
+				)
+					return true;
+				if (dataJson && path === dataJson) return true;
+				return false;
+			};
+
+			// Commit message: same template handling as the regular sync.
+			const message = (this.settings.commitMessage || "vault sync {{date}}")
+				.split("{{date}}")
+				.join(new Date().toISOString());
+
+			// Throttle disk-log writes from the progress callback so the log is a
+			// stage trail, not a flood. The final RESULT/ERROR lines are awaited.
+			let progressCount = 0;
+			const onProgress = (msg: string) => {
+				progressNotice?.setMessage(t("apiSyncProgress", { n: msg }));
+				progressCount++;
+				if (progressCount === 1 || progressCount % 50 === 0) {
+					void log(`PROGRESS: ${msg}`);
+				}
+			};
+
+			await log("SYNCING");
+			const result = await apiSync({
+				owner: parsed.owner,
+				repo: parsed.repo,
+				branch,
+				token: this.settings.token,
+				adapter: this.app.vault.adapter,
+				baseline: this.settings.apiBaseline,
+				excluded,
+				message,
+				onProgress,
+			});
+
+			// Persist the new baseline so the next sync diffs against the state we
+			// just agreed on. Do this BEFORE any other reporting.
+			this.settings.apiBaseline = result.newBaseline;
+			await this.saveSettings();
+
+			await log(
+				`RESULT: pulled=${result.pulled.length}, pushed=${result.pushed.length}, ` +
+					`deletedLocal=${result.deletedLocal.length}, deletedRemote=${result.deletedRemote.length}, ` +
+					`conflicts=${result.conflicts.length}, committed=${result.committed}, ` +
+					`baselineSaved=true`
+			);
+			if (result.conflicts.length > 0) {
+				await log(`CONFLICTS: ${result.conflicts.join(", ")}`);
+			}
+
+			new Notice(
+				t("apiSyncDone", {
+					pulled: result.pulled.length,
+					pushed: result.pushed.length,
+					delLocal: result.deletedLocal.length,
+					delRemote: result.deletedRemote.length,
+				}),
+				10_000
+			);
+			if (result.conflicts.length > 0) {
+				new Notice(
+					t("apiSyncConflicts", { n: result.conflicts.length }),
+					10_000
+				);
+			}
+			new Notice(t("apiSyncLogSaved", { file: logPath }), 10_000);
+		} catch (err) {
+			console.error("Git Vault Sync API sync failed", err);
+			const e = err as Error;
+			await log(`ERROR: ${e?.message ?? String(err)}`);
+			if (e?.stack) await log(`STACK: ${e.stack}`);
+			new Notice(t("apiSyncFailed", { msg: e?.message ?? String(err) }));
 		} finally {
 			progressNotice?.hide();
 		}

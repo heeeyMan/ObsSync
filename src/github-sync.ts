@@ -1,4 +1,4 @@
-import { requestUrl } from "obsidian";
+import { requestUrl, DataAdapter } from "obsidian";
 import { t } from "./i18n";
 
 /**
@@ -71,6 +71,60 @@ async function apiGet(url: string, token: string): Promise<unknown> {
 	}
 
 	// status 0 means the request never reached the server (offline, DNS, etc.).
+	if (!res.status) {
+		throw new Error(t("errNetwork"));
+	}
+	if (res.status === 401 || res.status === 403) {
+		throw new Error(t("errBadToken"));
+	}
+	if (res.status === 404) {
+		throw new Error(t("errNotFound"));
+	}
+	if (res.status < 200 || res.status >= 300) {
+		throw new Error(t("errNetwork"));
+	}
+
+	return res.json;
+}
+
+/**
+ * POST/PATCH against the GitHub API with the same timeout and status handling
+ * as {@link apiGet}. Sends `body` as JSON and returns the parsed JSON response.
+ * 401/403 → errBadToken, 404 → errNotFound, network/timeout → errNetwork; any
+ * other non-2xx is surfaced as a network error. The token is only ever sent as
+ * an Authorization header — never logged.
+ */
+async function apiWrite(
+	url: string,
+	method: "POST" | "PATCH",
+	body: unknown,
+	token: string,
+): Promise<unknown> {
+	let timer: number | undefined;
+	const timeout = new Promise<never>((_, reject) => {
+		timer = window.setTimeout(() => {
+			reject(new Error(`ERR_TIMEOUT: request timed out after ${REQUEST_TIMEOUT_MS}ms`));
+		}, REQUEST_TIMEOUT_MS);
+	});
+
+	let res;
+	try {
+		res = await Promise.race([
+			requestUrl({
+				url,
+				method,
+				headers: { ...headers(token), "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+				throw: false,
+			}),
+			timeout,
+		]);
+	} catch {
+		throw new Error(t("errNetwork"));
+	} finally {
+		if (timer) window.clearTimeout(timer);
+	}
+
 	if (!res.status) {
 		throw new Error(t("errNetwork"));
 	}
@@ -212,6 +266,125 @@ function base64ToBytes(b64: string): Uint8Array {
 }
 
 /**
+ * Encode raw bytes to base64. Mirrors {@link base64ToBytes}; `btoa` needs a
+ * binary string (one char per byte), so we build it in chunks to avoid blowing
+ * the argument limit of `String.fromCharCode(...)` on large blobs.
+ */
+function bytesToBase64(bytes: Uint8Array): string {
+	let binary = "";
+	const CHUNK = 0x8000;
+	for (let i = 0; i < bytes.length; i += CHUNK) {
+		const sub = bytes.subarray(i, i + CHUNK);
+		binary += String.fromCharCode.apply(null, sub as unknown as number[]);
+	}
+	return btoa(binary);
+}
+
+/**
+ * POST /git/blobs — upload a single blob's content (base64) and return its sha.
+ * Callers push one blob at a time and drop the bytes immediately, so peak
+ * memory stays at roughly one blob.
+ */
+export async function createBlob(
+	owner: string,
+	repo: string,
+	token: string,
+	content: Uint8Array,
+): Promise<string> {
+	const data = (await apiWrite(
+		`${API_BASE}/repos/${owner}/${repo}/git/blobs`,
+		"POST",
+		{ content: bytesToBase64(content), encoding: "base64" },
+		token,
+	)) as { sha?: unknown };
+	const sha = typeof data.sha === "string" ? data.sha : "";
+	if (!sha) throw new Error(t("errNetwork"));
+	return sha;
+}
+
+/** A single entry for {@link createTree}. `sha: null` deletes the path. */
+export interface TreeEntryInput {
+	path: string;
+	sha: string | null;
+	mode?: string;
+}
+
+/**
+ * POST /git/trees — build a new tree on top of `baseTreeSha`. Each entry is a
+ * blob: `{ path, mode: "100644", type: "blob", sha }` to add/modify, or
+ * `{ path, mode: "100644", type: "blob", sha: null }` to delete the path from
+ * the base tree. Returns the new tree sha.
+ */
+export async function createTree(
+	owner: string,
+	repo: string,
+	token: string,
+	baseTreeSha: string,
+	entries: TreeEntryInput[],
+): Promise<string> {
+	const tree = entries.map((e) => ({
+		path: e.path,
+		mode: e.mode ?? "100644",
+		type: "blob",
+		sha: e.sha,
+	}));
+	const data = (await apiWrite(
+		`${API_BASE}/repos/${owner}/${repo}/git/trees`,
+		"POST",
+		{ base_tree: baseTreeSha, tree },
+		token,
+	)) as { sha?: unknown };
+	const sha = typeof data.sha === "string" ? data.sha : "";
+	if (!sha) throw new Error(t("errNetwork"));
+	return sha;
+}
+
+/**
+ * POST /git/commits — create a commit pointing at `treeSha` with a single
+ * parent `parentSha`. Returns the new commit sha.
+ */
+export async function createCommit(
+	owner: string,
+	repo: string,
+	token: string,
+	message: string,
+	treeSha: string,
+	parentSha: string,
+): Promise<string> {
+	const data = (await apiWrite(
+		`${API_BASE}/repos/${owner}/${repo}/git/commits`,
+		"POST",
+		{ message, tree: treeSha, parents: [parentSha] },
+		token,
+	)) as { sha?: unknown };
+	const sha = typeof data.sha === "string" ? data.sha : "";
+	if (!sha) throw new Error(t("errNetwork"));
+	return sha;
+}
+
+/**
+ * PATCH /git/refs/heads/{branch} — move the branch ref to `commitSha`. With
+ * `force=false` GitHub rejects a non-fast-forward update (422), which surfaces
+ * as a network error so the caller re-syncs. Set `force=true` only when the
+ * caller knows the new commit descends from the remote tip it just read.
+ */
+export async function updateRef(
+	owner: string,
+	repo: string,
+	token: string,
+	branch: string,
+	commitSha: string,
+	force = false,
+): Promise<void> {
+	await apiWrite(
+		`${API_BASE}/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`,
+		"PATCH",
+		{ sha: commitSha, force },
+		token,
+	);
+}
+
+/**
  * Compute a Git blob object id: SHA-1 of the bytes
  * `"blob " + <byteLength> + "\0"` followed by the content. This matches
  * `git hash-object` and the `sha` GitHub reports in a tree, so it lets us
@@ -313,4 +486,297 @@ export async function dryRunPull(opts: {
 	}
 
 	return { blobs, totalBytes, maxBlobBytes, truncated };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Stage 2: full API sync (pull + push) over the Git Data API.                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A snapshot of the confirmed common state after the last successful sync:
+ * local == remote at that point. `commitSha` is the remote commit we were in
+ * sync with; `shas` maps each (non-excluded) path to its git blob sha then.
+ * Change detection diffs the current local and remote sha sets against this.
+ */
+export interface ApiSyncBaseline {
+	commitSha: string | null;
+	shas: Record<string, string>;
+}
+
+export interface ApiSyncResult {
+	pulled: string[];
+	pushed: string[];
+	deletedLocal: string[];
+	deletedRemote: string[];
+	conflicts: string[];
+	committed: boolean;
+	newBaseline: ApiSyncBaseline;
+}
+
+/**
+ * Detect whether bytes are "binary" the same way the vault layer does: a NUL
+ * byte anywhere means binary. Text is written via `adapter.write` (preserving
+ * the platform's string handling); binary via `adapter.writeBinary`.
+ */
+function looksBinary(bytes: Uint8Array): boolean {
+	for (let i = 0; i < bytes.length; i++) {
+		if (bytes[i] === 0) return true;
+	}
+	return false;
+}
+
+const TEXT_DECODER = new TextDecoder("utf-8");
+
+/**
+ * Recursively walk the vault via `adapter.list` (which is per-folder), yielding
+ * every non-excluded file path. Reading content is left to the caller so we
+ * never hold more than one file's bytes at a time. The repo's own `.git` and
+ * anything `excluded` rejects is skipped (folders are pruned eagerly).
+ */
+async function listVaultFiles(
+	adapter: DataAdapter,
+	dir: string,
+	excluded: (path: string) => boolean,
+	out: string[],
+): Promise<void> {
+	const listing = await adapter.list(dir === "" ? "/" : dir);
+	for (const file of listing.files) {
+		const p = file.replace(/^\/+/, "");
+		if (!p || excluded(p)) continue;
+		out.push(p);
+	}
+	for (const folder of listing.folders) {
+		const f = folder.replace(/^\/+/, "");
+		if (!f) continue;
+		// Prune excluded folders (the predicate is also given a trailing-slash
+		// form so a "folder/" rule matches) and the repo's git dir.
+		if (f === ".git" || excluded(f) || excluded(`${f}/`)) continue;
+		await listVaultFiles(adapter, f, excluded, out);
+	}
+}
+
+/**
+ * Build `path -> gitBlobSha` for the whole vault, reading each file's bytes one
+ * at a time and dropping them after hashing. Peak memory ≈ one file.
+ */
+async function scanLocalShas(
+	adapter: DataAdapter,
+	excluded: (path: string) => boolean,
+	onProgress?: (msg: string) => void,
+): Promise<Record<string, string>> {
+	const paths: string[] = [];
+	await listVaultFiles(adapter, "", excluded, paths);
+
+	const shas: Record<string, string> = {};
+	let i = 0;
+	for (const p of paths) {
+		let bytes: Uint8Array | undefined = new Uint8Array(await adapter.readBinary(p));
+		shas[p] = await gitBlobSha(bytes);
+		bytes = undefined;
+		i++;
+		if (onProgress && i % PROGRESS_EVERY === 0) {
+			onProgress(t("progStaging"));
+		}
+	}
+	return shas;
+}
+
+/** Classify a set of paths into added/modified vs deleted against a baseline. */
+function diffShas(
+	current: Record<string, string>,
+	baseline: Record<string, string>,
+): { changed: Set<string>; deleted: Set<string> } {
+	const changed = new Set<string>();
+	const deleted = new Set<string>();
+	for (const [p, sha] of Object.entries(current)) {
+		if (baseline[p] !== sha) changed.add(p);
+	}
+	for (const p of Object.keys(baseline)) {
+		if (!(p in current)) deleted.add(p);
+	}
+	return { changed, deleted };
+}
+
+/**
+ * Full bidirectional sync over the Git Data API, with NO conflict resolution
+ * yet (stage 3). Memory is held to roughly one blob at a time throughout.
+ *
+ * Algorithm:
+ *  1. Resolve the remote head and recursive tree → `remoteShas` (blobs only,
+ *     excluded paths dropped).
+ *  2. Walk the vault → `localShas` (git blob sha of every non-excluded file).
+ *  3. Diff each side against `baseline.shas`:
+ *       localChanged/localDeleted, remoteChanged/remoteDeleted.
+ *  4. A path is a CONFLICT when it changed on both sides to different results
+ *     (different sha, or deleted on one side and changed on the other). On this
+ *     stage conflicts are left completely untouched (not pulled, not pushed,
+ *     local file unchanged) and collected in `result.conflicts`.
+ *  5. Pull non-conflict remote changes: fetch each blob (one at a time) and
+ *     write it; remove files deleted remotely.
+ *  6. Push non-conflict local changes: createBlob per file, one createTree on
+ *     top of the remote tree (modified shas + deletions as sha:null), one
+ *     createCommit (parent = remote commit), updateRef.
+ *  7. Rebuild the baseline from the now-agreed state. Conflict paths keep their
+ *     OLD baseline sha so they're re-detected as changed next time.
+ */
+export async function apiSync(opts: {
+	owner: string;
+	repo: string;
+	branch: string;
+	token: string;
+	adapter: DataAdapter;
+	baseline: ApiSyncBaseline;
+	excluded: (path: string) => boolean;
+	message?: string;
+	onProgress?: (msg: string) => void;
+}): Promise<ApiSyncResult> {
+	const { owner, repo, branch, token, adapter, baseline, excluded, onProgress } = opts;
+
+	// 1. Remote state.
+	onProgress?.(t("progFetching"));
+	const { commitSha: remoteCommit, treeSha: remoteTree } = await getBranchHead(
+		owner,
+		repo,
+		branch,
+		token,
+	);
+	const { entries } = await getTree(owner, repo, remoteTree, token);
+	const remoteShas: Record<string, string> = {};
+	for (const e of entries) {
+		if (!e.path || excluded(e.path)) continue;
+		remoteShas[e.path] = e.sha;
+	}
+
+	// 2. Local state.
+	const localShas = await scanLocalShas(adapter, excluded, onProgress);
+
+	// 3. Diff both sides against the baseline.
+	const local = diffShas(localShas, baseline.shas);
+	const remote = diffShas(remoteShas, baseline.shas);
+
+	// 4. Conflicts: touched on both sides with differing outcomes.
+	const conflicts = new Set<string>();
+	const touchedLocal = new Set<string>([...local.changed, ...local.deleted]);
+	const touchedRemote = new Set<string>([...remote.changed, ...remote.deleted]);
+	for (const p of touchedLocal) {
+		if (!touchedRemote.has(p)) continue;
+		const lSha = localShas[p]; // undefined if locally deleted
+		const rSha = remoteShas[p]; // undefined if remotely deleted
+		if (lSha !== rSha) conflicts.add(p);
+		// If both ended at the same sha (lSha === rSha, incl. both-deleted) the
+		// two sides converged — no conflict, and nothing to pull or push.
+	}
+
+	const result: ApiSyncResult = {
+		pulled: [],
+		pushed: [],
+		deletedLocal: [],
+		deletedRemote: [],
+		conflicts: [...conflicts].sort(),
+		committed: false,
+		newBaseline: { commitSha: baseline.commitSha, shas: {} },
+	};
+
+	// 5. Pull non-conflict remote changes.
+	const toPull = [...remote.changed].filter((p) => !conflicts.has(p)).sort();
+	const toDeleteLocal = [...remote.deleted].filter((p) => !conflicts.has(p)).sort();
+
+	let pullCount = 0;
+	for (const p of toPull) {
+		// Skip pulling a blob whose content already matches locally (both sides
+		// independently produced the same bytes): nothing to download or write,
+		// so it must not be reported as pulled. The baseline is rebuilt from the
+		// remote set below and stays correct regardless.
+		if (localShas[p] === remoteShas[p]) {
+			continue;
+		}
+		let bytes: Uint8Array | undefined = await getBlob(owner, repo, remoteShas[p], token);
+		await writeVaultFile(adapter, p, bytes);
+		bytes = undefined;
+		result.pulled.push(p);
+		pullCount++;
+		if (onProgress && pullCount % PROGRESS_EVERY === 0) onProgress(t("progMerging"));
+	}
+	for (const p of toDeleteLocal) {
+		if (await adapter.exists(p)) await adapter.remove(p);
+		result.deletedLocal.push(p);
+	}
+
+	// 6. Push non-conflict local changes.
+	const toPush = [...local.changed].filter((p) => !conflicts.has(p)).sort();
+	const toDeleteRemote = [...local.deleted].filter((p) => !conflicts.has(p)).sort();
+
+	// Drop no-op pushes where the remote already has the identical sha (e.g. the
+	// same edit landed on both sides) — re-pushing would be an empty change.
+	const realPush = toPush.filter((p) => remoteShas[p] !== localShas[p]);
+	const realDeleteRemote = toDeleteRemote.filter((p) => p in remoteShas);
+
+	let newCommit = remoteCommit;
+	if (realPush.length > 0 || realDeleteRemote.length > 0) {
+		onProgress?.(t("progPushing"));
+		const treeEntries: TreeEntryInput[] = [];
+		let pushCount = 0;
+		for (const p of realPush) {
+			let bytes: Uint8Array | undefined = new Uint8Array(await adapter.readBinary(p));
+			const sha = await createBlob(owner, repo, token, bytes);
+			bytes = undefined;
+			treeEntries.push({ path: p, sha });
+			pushCount++;
+			if (onProgress && pushCount % PROGRESS_EVERY === 0) onProgress(t("progPushing"));
+		}
+		for (const p of realDeleteRemote) {
+			treeEntries.push({ path: p, sha: null });
+		}
+
+		const newTree = await createTree(owner, repo, token, remoteTree, treeEntries);
+		const message = opts.message && opts.message.trim() ? opts.message : "GitSync";
+		newCommit = await createCommit(owner, repo, token, message, newTree, remoteCommit);
+		await updateRef(owner, repo, token, branch, newCommit, false);
+		result.committed = true;
+	}
+
+	for (const p of realPush) result.pushed.push(p);
+	for (const p of realDeleteRemote) result.deletedRemote.push(p);
+
+	// 7. Rebuild the baseline = the agreed common state we just established.
+	//    Start from the (effective) remote set, apply what we pulled/deleted
+	//    locally and pushed/deleted remotely, then re-pin conflict paths to
+	//    their OLD baseline sha so they re-surface as changes next sync.
+	const nb: Record<string, string> = {};
+	// Begin from remote tree (post-known state), minus conflict paths handled below.
+	for (const [p, sha] of Object.entries(remoteShas)) nb[p] = sha;
+	// Apply pulls (now local matches remote — already in nb) and local deletions.
+	for (const p of result.deletedLocal) delete nb[p];
+	// Apply pushes: those paths now exist remotely at the local sha.
+	for (const p of result.pushed) nb[p] = localShas[p];
+	for (const p of result.deletedRemote) delete nb[p];
+	// Conflict paths: keep them as they were in the prior baseline (or absent),
+	// so the next sync re-detects them and resolution can run.
+	for (const p of conflicts) {
+		if (p in baseline.shas) nb[p] = baseline.shas[p];
+		else delete nb[p];
+	}
+
+	result.newBaseline = { commitSha: newCommit, shas: nb };
+	return result;
+}
+
+/** Write bytes to the vault, choosing text vs binary path like git-fs does. */
+async function writeVaultFile(adapter: DataAdapter, path: string, bytes: Uint8Array): Promise<void> {
+	const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+	if (dir && !(await adapter.exists(dir))) {
+		// Create the ancestor chain top-down.
+		const segs = dir.split("/");
+		let prefix = "";
+		for (const seg of segs) {
+			if (!seg) continue;
+			prefix = prefix ? `${prefix}/${seg}` : seg;
+			if (!(await adapter.exists(prefix))) await adapter.mkdir(prefix);
+		}
+	}
+	if (looksBinary(bytes)) {
+		await adapter.writeBinary(path, new Uint8Array(bytes).buffer);
+	} else {
+		await adapter.write(path, TEXT_DECODER.decode(bytes));
+	}
 }
