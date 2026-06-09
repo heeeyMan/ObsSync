@@ -69,6 +69,15 @@ export interface SyncResult {
 }
 
 /**
+ * Narrowed view of isomorphic-git's `getRemoteInfo` result. Its own type
+ * declares `refs` as `any`, so we re-type just the part we read (the advertised
+ * branch heads) to keep the call site type-safe.
+ */
+interface RemoteInfo {
+	refs?: { heads?: Record<string, string> };
+}
+
+/**
  * Thrown by {@link GitManager.sync} when a merge needs manual resolution.
  * Carries the commit ids of both sides so the resolver can read each version
  * and finish the merge via {@link GitManager.completeMerge}.
@@ -262,7 +271,7 @@ export class GitManager {
 	 */
 	private async isOriginConfigured(): Promise<boolean> {
 		try {
-			const url = await git.getConfig({
+			const url: unknown = await git.getConfig({
 				fs: this.fs,
 				dir: this.dir,
 				path: "remote.origin.url",
@@ -301,15 +310,16 @@ export class GitManager {
 	 */
 	async testConnection(): Promise<string[]> {
 		const s = this.getSettings();
-		const info = await git.getRemoteInfo({
+		const info = (await git.getRemoteInfo({
 			http: obsidianHttpClient,
 			url: s.remoteUrl,
 			onAuth: () => ({
 				username: s.username || s.token,
 				password: s.token,
 			}),
-		});
-		const branches = info.refs?.heads ? Object.keys(info.refs.heads) : [];
+		})) as RemoteInfo;
+		const heads = info.refs?.heads;
+		const branches = heads ? Object.keys(heads) : [];
 		return branches;
 	}
 
@@ -432,7 +442,7 @@ export class GitManager {
 			? await this.snapshotPaths([...protectedPaths])
 			: null;
 
-		let caught: unknown;
+		let caught: Error | undefined;
 		let isConflict = false;
 		try {
 			// On mobile, a very large changeset would build one giant packfile
@@ -480,7 +490,7 @@ export class GitManager {
 			// it to the localized errIndexVersion text, which the detector won't
 			// match — defeating recovery. Everything else is mapped here as usual.
 			if (isUnsupportedIndexError(err)) {
-				caught = err;
+				caught = err as Error;
 			} else {
 				caught = friendlyError(err);
 				isConflict = caught instanceof MergeConflict;

@@ -60,7 +60,7 @@ export default class GitSyncPlugin extends Plugin {
 		// the screen is locked (especially on mobile) and doesn't catch up the
 		// missed ticks. When we return to the foreground, run a sync if a full
 		// interval has elapsed since the last one.
-		this.registerDomEvent(document, "visibilitychange", () =>
+		this.registerDomEvent(activeDocument, "visibilitychange", () =>
 			this.onVisibilityChange()
 		);
 
@@ -116,7 +116,7 @@ export default class GitSyncPlugin extends Plugin {
 	 * suspended). Conservative: only when auto-sync is on and we're idle.
 	 */
 	private onVisibilityChange() {
-		if (document.visibilityState !== "visible") return;
+		if (activeDocument.visibilityState !== "visible") return;
 		if (!this.settings.autoSyncEnabled) return;
 		if (this.syncing || this.conflictActive) return;
 		const intervalMs = Math.max(1, this.settings.autoSyncInterval) * 60_000;
@@ -126,7 +126,8 @@ export default class GitSyncPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		const saved = (await this.loadData()) as Partial<GitSyncSettings> | null;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, saved ?? {});
 	}
 
 	async saveSettings() {
@@ -305,23 +306,27 @@ export default class GitSyncPlugin extends Plugin {
 			this.app,
 			this.git,
 			err,
-			async (result) => {
-				this.conflictActive = false;
-				await this.markSynced();
-				const parts: string[] = [];
-				if (result.committed) parts.push(t("resultMerged"));
-				if (result.pushed) parts.push(t("resultPushed"));
-				new Notice(
-					t("noticeResult", {
-						parts: parts.join(", ") || t("resultResolved"),
-					})
-				);
-				await this.refreshStatus();
+			(result) => {
+				void (async () => {
+					this.conflictActive = false;
+					await this.markSynced();
+					const parts: string[] = [];
+					if (result.committed) parts.push(t("resultMerged"));
+					if (result.pushed) parts.push(t("resultPushed"));
+					new Notice(
+						t("noticeResult", {
+							parts: parts.join(", ") || t("resultResolved"),
+						})
+					);
+					await this.refreshStatus();
+				})();
 			},
-			async () => {
-				this.conflictActive = false;
-				new Notice(t("noticeAborted"));
-				await this.refreshStatus();
+			() => {
+				void (async () => {
+					this.conflictActive = false;
+					new Notice(t("noticeAborted"));
+					await this.refreshStatus();
+				})();
 			}
 		);
 		this.currentModal = modal;

@@ -48,9 +48,9 @@ export const obsidianHttpClient: HttpClient = {
 	}: GitHttpRequest): Promise<GitHttpResponse> {
 		const bodyBuffer = await collectBody(body);
 
-		let timer: ReturnType<typeof setTimeout> | undefined;
+		let timer: number | undefined;
 		const timeout = new Promise<never>((_, reject) => {
-			timer = setTimeout(() => {
+			timer = window.setTimeout(() => {
 				reject(new Error(`ERR_TIMEOUT: request timed out after ${REQUEST_TIMEOUT_MS}ms`));
 			}, REQUEST_TIMEOUT_MS);
 		});
@@ -68,7 +68,7 @@ export const obsidianHttpClient: HttpClient = {
 				timeout,
 			]);
 		} finally {
-			if (timer) clearTimeout(timer);
+			if (timer) window.clearTimeout(timer);
 		}
 
 		// status 0 (and the empty body that comes with it) means the request
