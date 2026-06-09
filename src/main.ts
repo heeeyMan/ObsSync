@@ -52,6 +52,10 @@ export default class GitSyncPlugin extends Plugin {
 		await this.loadSettings();
 		setLanguage(this.settings.language);
 		this.git = new GitManager(this.app.vault.adapter, () => this.settings);
+		// Never let the engine commit our own data.json (it holds the PAT).
+		this.git.setAlwaysExclude([
+			`${this.app.vault.configDir}/plugins/${this.manifest.id}/data.json`,
+		]);
 
 		this.addRibbonIcon("refresh-cw", t("ribbonSync"), () => {
 			void this.sync();
