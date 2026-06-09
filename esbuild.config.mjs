@@ -10,6 +10,13 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = process.argv[2] === "production";
 
+// isomorphic-git (via readable-stream / sha.js) pulls in these Node builtins,
+// which exist on desktop (Electron) but NOT in Obsidian's mobile WebView. They
+// ship as browser polyfills, so we bundle them instead of leaving them external
+// — otherwise the plugin fails to load on Android/iOS. The matching `Buffer` /
+// `process` globals are supplied by polyfills.mjs via `inject`.
+const nodePolyfilled = ["buffer", "process"];
+
 const context = await esbuild.context({
 	banner: { js: banner },
 	entryPoints: ["src/main.ts"],
@@ -28,8 +35,9 @@ const context = await esbuild.context({
 		"@lezer/common",
 		"@lezer/highlight",
 		"@lezer/lr",
-		...builtins,
+		...builtins.filter((b) => !nodePolyfilled.includes(b)),
 	],
+	inject: ["polyfills.mjs"],
 	format: "cjs",
 	target: "es2018",
 	logLevel: "info",
@@ -37,9 +45,9 @@ const context = await esbuild.context({
 	treeShaking: true,
 	outfile: "main.js",
 	minify: prod,
-	// isomorphic-git references "process" and Node globals; define a minimal shim.
+	// `global` is a Node-ism some deps reference; map it to the universal object.
 	define: {
-		"global": "window",
+		"global": "globalThis",
 	},
 });
 
