@@ -47,7 +47,7 @@ export interface GitSyncSettings {
 	 */
 	syncEngine: "auto" | "git" | "api";
 	/**
-	 * Persistent baseline for the experimental API sync engine (github-sync.ts):
+	 * Persistent baseline for the API sync engine (github-sync.ts):
 	 * the confirmed common state (remote commit + per-path blob shas) after the
 	 * last successful API sync. Stored in data.json; not shown in the UI.
 	 */
