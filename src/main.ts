@@ -18,8 +18,17 @@ export default class GitSyncPlugin extends Plugin {
 	private syncing = false;
 	private changeCount = 0;
 	private lastSyncError = false;
+	/** True while a ConflictModal is open (or a silent conflict awaits the
+	 *  user). Blocks auto-sync from running over a half-merged tree. */
+	private conflictActive = false;
+	/** A conflict surfaced by a silent sync, parked until the user taps to
+	 *  resolve it (we don't auto-open the modal in the background). */
+	private pendingConflict: MergeConflict | null = null;
 	private autoSyncTimer: number | null = null;
 	private statusRefreshTimer: number | null = null;
+	/** The currently open GitSync modal, so onunload can close it and avoid
+	 *  leaving a modal holding a reference to the unloaded plugin's GitManager. */
+	private currentModal: ConflictModal | ReviewModal | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -42,10 +51,18 @@ export default class GitSyncPlugin extends Plugin {
 		this.statusTextEl = this.statusBarEl.createSpan({
 			cls: "gitsync-status-text",
 		});
-		this.statusBarEl.addEventListener("click", (evt) =>
+		this.registerDomEvent(this.statusBarEl, "click", (evt) =>
 			this.showStatusMenu(evt)
 		);
 		this.setStatus("idle");
+
+		// The auto-sync setInterval is frozen while Obsidian is backgrounded /
+		// the screen is locked (especially on mobile) and doesn't catch up the
+		// missed ticks. When we return to the foreground, run a sync if a full
+		// interval has elapsed since the last one.
+		this.registerDomEvent(document, "visibilitychange", () =>
+			this.onVisibilityChange()
+		);
 
 		this.addCommand({
 			id: "sync",
@@ -87,6 +104,25 @@ export default class GitSyncPlugin extends Plugin {
 		if (this.autoSyncTimer !== null) window.clearInterval(this.autoSyncTimer);
 		if (this.statusRefreshTimer !== null)
 			window.clearTimeout(this.statusRefreshTimer);
+		// Close any open modal so it doesn't keep operating on (and holding a
+		// reference to) the unloaded plugin's GitManager.
+		this.currentModal?.close();
+		this.currentModal = null;
+	}
+
+	/**
+	 * On return to the foreground, catch up auto-sync if a full interval has
+	 * elapsed since the last sync (the background setInterval doesn't fire while
+	 * suspended). Conservative: only when auto-sync is on and we're idle.
+	 */
+	private onVisibilityChange() {
+		if (document.visibilityState !== "visible") return;
+		if (!this.settings.autoSyncEnabled) return;
+		if (this.syncing || this.conflictActive) return;
+		const intervalMs = Math.max(1, this.settings.autoSyncInterval) * 60_000;
+		const elapsed = Date.now() - this.settings.lastSyncAt;
+		if (this.settings.lastSyncAt && elapsed < intervalMs) return;
+		void this.sync(true);
 	}
 
 	async loadSettings() {
@@ -117,7 +153,7 @@ export default class GitSyncPlugin extends Plugin {
 	 * "nothing to do" chatter and credential prompts.
 	 */
 	async sync(silent = false, only?: string[]): Promise<void> {
-		if (this.syncing) {
+		if (this.syncing || this.conflictActive) {
 			if (!silent) new Notice(t("noticeInProgress"));
 			return;
 		}
@@ -151,11 +187,26 @@ export default class GitSyncPlugin extends Plugin {
 		} catch (err) {
 			if (err instanceof MergeConflict) {
 				console.warn("GitSync merge conflict", err.files);
-				new Notice(t("noticeConflicts", { n: err.files.length }));
-				this.openConflictModal(err);
+				if (silent) {
+					// Background sync: don't open a modal over the user's work.
+					// Park the conflict and surface a sticky status-bar state;
+					// the user opens the modal explicitly (tap / command).
+					this.pendingConflict = err;
+					this.conflictActive = true;
+				} else {
+					new Notice(t("noticeConflicts", { n: err.files.length }));
+					this.openConflictModal(err);
+				}
 			} else {
 				console.error("GitSync sync failed", err);
-				new Notice(t("noticeSyncFailed", { msg: (err as Error).message }));
+				// Silent (auto/startup) sync: stay quiet — a stale token or no
+				// network would otherwise spam a Notice every tick. The sticky
+				// status-bar error indicator (lastSyncError) carries it instead.
+				if (!silent) {
+					new Notice(
+						t("noticeSyncFailed", { msg: (err as Error).message })
+					);
+				}
 				this.lastSyncError = true;
 			}
 		} finally {
@@ -169,14 +220,33 @@ export default class GitSyncPlugin extends Plugin {
 			new Notice(t("noticeConfigure"));
 			return;
 		}
-		new ReviewModal(this.app, this.git, (paths) => {
+		const modal = new ReviewModal(this.app, this.git, (paths) => {
 			if (paths.length === 0) return;
 			void this.sync(false, paths);
-		}).open();
+		});
+		this.currentModal = modal;
+		modal.onCloseHook = () => {
+			if (this.currentModal === modal) this.currentModal = null;
+		};
+		modal.open();
 	}
 
 	private showStatusMenu(evt: MouseEvent) {
+		// A parked (silent) conflict: tapping the status bar jumps straight to
+		// resolving it rather than opening the menu.
+		if (this.pendingConflict) {
+			this.resolvePendingConflict();
+			return;
+		}
 		const menu = new Menu();
+		if (this.conflictActive) {
+			menu.addItem((i) =>
+				i
+					.setTitle(t("menuResolve"))
+					.setIcon("alert-triangle")
+					.onClick(() => this.resolvePendingConflict())
+			);
+		}
 		menu.addItem((i) =>
 			i
 				.setTitle(t("menuSyncNow"))
@@ -214,12 +284,17 @@ export default class GitSyncPlugin extends Plugin {
 	}
 
 	private openConflictModal(err: MergeConflict) {
+		// Block auto-sync for the (possibly long) duration of resolution. The
+		// flag is cleared in both modal outcomes below and in onClose.
+		this.conflictActive = true;
+		this.pendingConflict = null;
 		this.setStatus("idle");
-		new ConflictModal(
+		const modal = new ConflictModal(
 			this.app,
 			this.git,
 			err,
 			async (result) => {
+				this.conflictActive = false;
 				await this.markSynced();
 				const parts: string[] = [];
 				if (result.committed) parts.push(t("resultMerged"));
@@ -232,10 +307,23 @@ export default class GitSyncPlugin extends Plugin {
 				await this.refreshStatus();
 			},
 			async () => {
+				this.conflictActive = false;
 				new Notice(t("noticeAborted"));
 				await this.refreshStatus();
 			}
-		).open();
+		);
+		this.currentModal = modal;
+		modal.onCloseHook = () => {
+			if (this.currentModal === modal) this.currentModal = null;
+		};
+		modal.open();
+	}
+
+	/** Open the modal for a conflict parked by a silent sync (user action). */
+	private resolvePendingConflict() {
+		const err = this.pendingConflict;
+		if (!err) return;
+		this.openConflictModal(err);
 	}
 
 	async testConnection(): Promise<void> {
@@ -273,6 +361,12 @@ export default class GitSyncPlugin extends Plugin {
 
 	private async refreshStatus() {
 		if (this.syncing) return;
+		// A parked silent conflict takes priority: keep prompting the user to
+		// resolve it (tap the status bar) until they do.
+		if (this.pendingConflict) {
+			this.setStatus("conflict");
+			return;
+		}
 		// Keep the error indicator sticky until the next sync attempt.
 		if (this.lastSyncError) {
 			this.setStatus("error");
@@ -286,7 +380,7 @@ export default class GitSyncPlugin extends Plugin {
 		this.setStatus("idle");
 	}
 
-	private setStatus(state: "idle" | "syncing" | "error") {
+	private setStatus(state: "idle" | "syncing" | "error" | "conflict") {
 		this.statusBarEl.removeClass(
 			"gitsync-status-bar--syncing",
 			"gitsync-status-bar--error"
@@ -306,6 +400,12 @@ export default class GitSyncPlugin extends Plugin {
 				icon = "alert-triangle";
 				text = t("statusError");
 				tooltip = t("tipError");
+				break;
+			case "conflict":
+				this.statusBarEl.addClass("gitsync-status-bar--error");
+				icon = "git-merge";
+				text = t("statusConflict");
+				tooltip = t("tipConflict");
 				break;
 			default: {
 				const n = this.changeCount;
