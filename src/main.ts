@@ -7,7 +7,15 @@ import {
 import { GitManager, MergeConflict } from "./git";
 import { ConflictModal } from "./conflict-modal";
 import { ReviewModal } from "./review-modal";
-import { apiSync, dryRunPull, parseGitHubRepo } from "./github-sync";
+import {
+	apiSync,
+	commitResolutions,
+	ConflictInfo,
+	dryRunPull,
+	getBlob,
+	parseGitHubRepo,
+} from "./github-sync";
+import { ApiConflictFile, ApiConflictModal } from "./api-conflict-modal";
 import { setLanguage, t } from "./i18n";
 
 /** Vault-root markdown log for the experimental API-pull diagnostic. It is
@@ -37,7 +45,8 @@ export default class GitSyncPlugin extends Plugin {
 	private statusRefreshTimer: number | null = null;
 	/** The currently open GitSync modal, so onunload can close it and avoid
 	 *  leaving a modal holding a reference to the unloaded plugin's GitManager. */
-	private currentModal: ConflictModal | ReviewModal | null = null;
+	private currentModal: ConflictModal | ReviewModal | ApiConflictModal | null =
+		null;
 
 	async onload() {
 		await this.loadSettings();
@@ -56,14 +65,6 @@ export default class GitSyncPlugin extends Plugin {
 		// mobile (no command palette hunting); the command below still exists too.
 		this.addRibbonIcon("flask-conical", t("cmdApiPullTest"), () => {
 			void this.apiPullTest();
-		});
-
-		// Experimental REAL bidirectional sync over the Git Data API. This one
-		// WRITES to the vault and PUSHES to the remote — run it on a test repo
-		// first. A ribbon icon is the most reliable trigger on mobile; the
-		// command below exists too.
-		this.addRibbonIcon("refresh-cw-off", t("cmdApiSync"), () => {
-			void this.apiSyncTest();
 		});
 
 		this.statusBarEl = this.addStatusBarItem();
@@ -109,12 +110,6 @@ export default class GitSyncPlugin extends Plugin {
 			id: "api-pull-test",
 			name: t("cmdApiPullTest"),
 			callback: () => void this.apiPullTest(),
-		});
-
-		this.addCommand({
-			id: "api-sync",
-			name: t("cmdApiSync"),
-			callback: () => void this.apiSyncTest(),
 		});
 
 		this.addSettingTab(new GitSyncSettingTab(this.app, this));
@@ -182,6 +177,17 @@ export default class GitSyncPlugin extends Plugin {
 		setLanguage(this.settings.language);
 	}
 
+	/**
+	 * Resolve the active sync engine. "auto" picks the API engine on mobile
+	 * (avoids OOM on large repos, no system git) and isomorphic-git on desktop.
+	 */
+	effectiveEngine(): "git" | "api" {
+		if (this.settings.syncEngine === "auto") {
+			return Platform.isMobile ? "api" : "git";
+		}
+		return this.settings.syncEngine;
+	}
+
 	/** (Re)start the auto-sync timer based on current settings. */
 	applyAutoSync() {
 		if (this.autoSyncTimer !== null) {
@@ -223,23 +229,10 @@ export default class GitSyncPlugin extends Plugin {
 				? new Notice("Git Vault Sync: " + t("statusSyncing"), 0)
 				: null;
 		try {
-			const result = await this.git.sync((msg) => {
-				this.statusTextEl.setText(msg);
-				progressNotice?.setMessage("Git Vault Sync: " + msg);
-			}, only);
-			await this.markSynced();
-			const parts: string[] = [];
-			if (result.committed) parts.push(t("resultCommitted"));
-			if (result.pulled) parts.push(t("resultPulled"));
-			if (result.pushed) parts.push(t("resultPushed"));
-			if (parts.length || !silent) {
-				new Notice(
-					t("noticeResult", {
-						parts: parts.length
-							? parts.join(", ")
-							: t("resultUpToDate"),
-					})
-				);
+			if (this.effectiveEngine() === "api") {
+				await this.syncApi(silent, only, progressNotice);
+			} else {
+				await this.syncGit(silent, only, progressNotice);
 			}
 		} catch (err) {
 			if (err instanceof MergeConflict) {
@@ -275,9 +268,152 @@ export default class GitSyncPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Git (isomorphic-git) sync path — the original behaviour. Stages, commits,
+	 * fetches+merges and pushes via {@link GitManager.sync}. A MergeConflict is
+	 * rethrown to {@link sync}'s shared catch (which parks it or opens the modal).
+	 */
+	private async syncGit(
+		silent: boolean,
+		only: string[] | undefined,
+		progressNotice: Notice | null
+	): Promise<void> {
+		const result = await this.git.sync((msg) => {
+			this.statusTextEl.setText(msg);
+			progressNotice?.setMessage("Git Vault Sync: " + msg);
+		}, only);
+		await this.markSynced();
+		const parts: string[] = [];
+		if (result.committed) parts.push(t("resultCommitted"));
+		if (result.pulled) parts.push(t("resultPulled"));
+		if (result.pushed) parts.push(t("resultPushed"));
+		if (parts.length || !silent) {
+			new Notice(
+				t("noticeResult", {
+					parts: parts.length
+						? parts.join(", ")
+						: t("resultUpToDate"),
+				})
+			);
+		}
+	}
+
+	/**
+	 * GitHub Git Data API sync path (default on mobile). Diffs the working tree
+	 * against the persisted baseline, pulls/pushes non-conflicting changes via
+	 * {@link apiSync}, then — on conflicts — opens {@link ApiConflictModal} and
+	 * commits the user's resolutions. The baseline is persisted only on success.
+	 *
+	 * Selective sync (`only`) is git-specific and unsupported here in v1: we
+	 * inform the user (non-silent) and sync everything. Non-fatal errors during
+	 * interactive resolution are surfaced by {@link resolveApiConflicts} itself;
+	 * a thrown error propagates to {@link sync}'s shared catch (H5-silent honored).
+	 */
+	private async syncApi(
+		silent: boolean,
+		only: string[] | undefined,
+		progressNotice: Notice | null
+	): Promise<void> {
+		if (only && only.length && !silent) {
+			new Notice(t("noticeApiNoSelective"));
+		}
+
+		const parsed = parseGitHubRepo(this.settings.remoteUrl);
+		if (!parsed) {
+			throw new Error(t("apiPullBadUrl"));
+		}
+		const branch = this.settings.branch || "main";
+		const token = this.settings.token;
+
+		// excluded predicate (mirrors apiSyncTest): the config dir (usually
+		// .obsidian), the repo's own .git, the conflicts staging folder, our
+		// diagnostic logs, and this plugin's data.json (which holds the PAT).
+		const configDir = this.app.vault.configDir;
+		const dataJson = `${this.manifest.dir ?? ""}/data.json`.replace(
+			/^\/+/,
+			""
+		);
+		const excluded = (p: string): boolean => {
+			const path = p.replace(/^\/+/, "");
+			if (!path) return true;
+			if (path === configDir || path.startsWith(`${configDir}/`))
+				return true;
+			if (path === ".git" || path.startsWith(".git/")) return true;
+			if (path.startsWith("_conflicts/")) return true;
+			if (path === APITEST_LOG_FILE || path === APISYNC_LOG_FILE)
+				return true;
+			if (dataJson && path === dataJson) return true;
+			return false;
+		};
+
+		const message = (this.settings.commitMessage || "vault sync {{date}}")
+			.split("{{date}}")
+			.join(new Date().toISOString());
+
+		const result = await apiSync({
+			owner: parsed.owner,
+			repo: parsed.repo,
+			branch,
+			token,
+			adapter: this.app.vault.adapter,
+			baseline: this.settings.apiBaseline,
+			excluded,
+			message,
+			onProgress: (msg) => {
+				this.statusTextEl.setText(msg);
+				progressNotice?.setMessage("Git Vault Sync: " + msg);
+			},
+		});
+
+		// Persist the new baseline so the next sync diffs against the state we
+		// just agreed on. Only reached on success (apiSync didn't throw).
+		this.settings.apiBaseline = result.newBaseline;
+		await this.saveSettings();
+		await this.markSynced();
+
+		const parts: string[] = [];
+		if (result.committed) parts.push(t("resultCommitted"));
+		if (result.pulled.length) parts.push(t("resultPulled"));
+		if (result.pushed.length) parts.push(t("resultPushed"));
+		if (parts.length || !silent) {
+			new Notice(
+				t("noticeResult", {
+					parts: parts.length
+						? parts.join(", ")
+						: t("resultUpToDate"),
+				})
+			);
+		}
+
+		// Interactive conflict resolution. Non-conflicting changes were already
+		// applied above; here the user picks a winner per clashing file.
+		if (result.conflicts.length > 0) {
+			// Tear down the sync progress Notice so it isn't left behind the
+			// modal (sync's finally also hides it, but it's gone earlier here).
+			progressNotice?.hide();
+			await this.resolveApiConflicts(
+				parsed.owner,
+				parsed.repo,
+				branch,
+				token,
+				result.conflicts,
+				message,
+				// No crash-log file for the regular sync path; swallow logging.
+				async () => {}
+			);
+		}
+	}
+
 	private openReview() {
 		if (!this.settings.remoteUrl || !this.settings.token) {
 			new Notice(t("noticeConfigure"));
+			return;
+		}
+		// Review / selective sync is git-specific (it relies on countChanges /
+		// listChanges over the local .git, and sync(only)). The API engine has
+		// no local repo to inspect, so it isn't available there in v1.
+		if (this.effectiveEngine() === "api") {
+			new Notice(t("noticeApiNoReview"));
 			return;
 		}
 		const modal = new ReviewModal(this.app, this.git, (paths) => {
@@ -531,158 +667,111 @@ export default class GitSyncPlugin extends Plugin {
 	}
 
 	/**
-	 * EXPERIMENTAL real bidirectional sync over the Git Data API (the new engine
-	 * in github-sync.ts). Unlike {@link apiPullTest}, this one WRITES pulled
-	 * changes into the vault and PUSHES local changes to the remote — run it on a
-	 * test repo first.
+	 * Interactive resolution for the conflicts the API sync left untouched. For each {@link ConflictInfo} we lazily materialize both sides'
+	 * bytes — the remote blob via {@link getBlob} (skipped when remote-deleted),
+	 * the local file via the adapter (skipped when locally deleted) — then open
+	 * {@link ApiConflictModal}. The user's per-file choice becomes the resolved
+	 * content (or `null` to delete), which {@link commitResolutions} writes to the
+	 * vault, uploads, commits on the live tip and pushes. The returned baseline is
+	 * persisted so those paths are no longer seen as diverged next sync.
 	 *
-	 * Like apiPullTest, the authoritative record is a crash-surviving markdown
-	 * log at the vault root ({@link APISYNC_LOG_FILE}): each key stage rewrites
-	 * the whole file and is awaited before the next heavy step, so if the app is
-	 * killed mid-run the last line shows how far we got. The PAT is never logged.
+	 * Errors are caught, logged to the crash-surviving log, and surfaced as a
+	 * Notice — they never propagate to break the surrounding sync reporting.
 	 */
-	async apiSyncTest(): Promise<void> {
-		const logPath = APISYNC_LOG_FILE;
-		const lines: string[] = [];
-		const stamp = () => new Date().toISOString();
-		const log = async (line: string) => {
-			lines.push(`- ${stamp()}  ${line}`);
-			try {
-				await this.app.vault.adapter.write(
-					logPath,
-					`# Git Vault Sync — API sync (experimental)\n\n${lines.join(
-						"\n"
-					)}\n`
-				);
-			} catch (e) {
-				console.error("Git Vault Sync apiSyncTest log write failed", e);
-			}
-		};
+	private async resolveApiConflicts(
+		owner: string,
+		repo: string,
+		branch: string,
+		token: string,
+		conflicts: ConflictInfo[],
+		message: string,
+		log: (line: string) => Promise<void>
+	): Promise<void> {
+		const adapter = this.app.vault.adapter;
 
-		// Immediate, unmissable proof the command fired — Notice + on-disk
-		// STARTED line — BEFORE any validation or network call.
-		new Notice(t("apiSyncStarting"), 0);
-		await log("STARTED");
-
-		let progressNotice: Notice | null = null;
+		// Lazily fetch both sides' bytes for each conflict (one blob at a time;
+		// the local file is already on disk). null = deleted on that side.
+		const files: ApiConflictFile[] = [];
 		try {
-			if (!this.settings.remoteUrl || !this.settings.token) {
-				await log("ERROR: remote URL or token not configured");
-				new Notice(t("errNoRemote"));
-				return;
+			for (const c of conflicts) {
+				const remoteContent =
+					c.remoteSha !== null
+						? await getBlob(owner, repo, c.remoteSha, token)
+						: null;
+				const localContent = c.localDeleted
+					? null
+					: new Uint8Array(await adapter.readBinary(c.path));
+				files.push({ path: c.path, localContent, remoteContent });
 			}
-			const parsed = parseGitHubRepo(this.settings.remoteUrl);
-			if (!parsed) {
-				await log("ERROR: cannot parse GitHub owner/repo from remote URL");
-				new Notice(t("apiPullBadUrl"));
-				return;
+		} catch (err) {
+			const e = err as Error;
+			console.error("Git Vault Sync: loading conflict content failed", err);
+			await log(`RESOLVE-ERROR: ${e?.message ?? String(err)}`);
+			new Notice(
+				t("apiSyncResolveFailed", { msg: e?.message ?? String(err) })
+			);
+			return;
+		}
+
+		// Open the modal and await the user's decision via the callbacks.
+		const resolved = await new Promise<Map<string, Uint8Array | null> | null>(
+			(resolve) => {
+				const modal = new ApiConflictModal(
+					this.app,
+					files,
+					(map) => resolve(map),
+					() => resolve(null)
+				);
+				this.currentModal = modal;
+				modal.onCloseHook = () => {
+					if (this.currentModal === modal) this.currentModal = null;
+				};
+				modal.open();
 			}
-			const branch = this.settings.branch || "main";
-			// Params WITHOUT the token.
-			await log(
-				`PARAMS: owner=${parsed.owner}, repo=${parsed.repo}, branch=${branch}`
-			);
+		);
 
-			// Persistent, updatable progress Notice (visible on mobile where the
-			// status bar is hidden). Hidden in `finally`.
-			progressNotice = new Notice(t("apiSyncStarting"), 0);
+		if (!resolved) {
+			await log("RESOLVE: cancelled");
+			new Notice(t("apiSyncResolveCancelled"));
+			return;
+		}
 
-			// excluded predicate. v1 scope (see report): skip the config dir
-			// (usually .obsidian), the repo's own .git, the conflicts staging
-			// folder, our diagnostic logs, and this plugin's data.json (the PAT).
-			// Full settings.excludePaths / .gitignore handling comes later.
-			const configDir = this.app.vault.configDir;
-			const dataJson = `${this.manifest.dir ?? ""}/data.json`.replace(
-				/^\/+/,
-				""
-			);
-			const excluded = (p: string): boolean => {
-				const path = p.replace(/^\/+/, "");
-				if (!path) return true;
-				if (
-					path === configDir ||
-					path.startsWith(`${configDir}/`)
-				)
-					return true;
-				if (path === ".git" || path.startsWith(".git/")) return true;
-				if (path.startsWith("_conflicts/")) return true;
-				if (
-					path === APITEST_LOG_FILE ||
-					path === APISYNC_LOG_FILE
-				)
-					return true;
-				if (dataJson && path === dataJson) return true;
-				return false;
-			};
-
-			// Commit message: same template handling as the regular sync.
-			const message = (this.settings.commitMessage || "vault sync {{date}}")
-				.split("{{date}}")
-				.join(new Date().toISOString());
-
-			// Throttle disk-log writes from the progress callback so the log is a
-			// stage trail, not a flood. The final RESULT/ERROR lines are awaited.
-			let progressCount = 0;
-			const onProgress = (msg: string) => {
-				progressNotice?.setMessage(t("apiSyncProgress", { n: msg }));
-				progressCount++;
-				if (progressCount === 1 || progressCount % 50 === 0) {
-					void log(`PROGRESS: ${msg}`);
-				}
-			};
-
-			await log("SYNCING");
-			const result = await apiSync({
-				owner: parsed.owner,
-				repo: parsed.repo,
+		const resolveNotice = new Notice(t("apiSyncResolving"), 0);
+		try {
+			await log(`RESOLVING: ${resolved.size} file(s)`);
+			const res = await commitResolutions({
+				owner,
+				repo,
 				branch,
-				token: this.settings.token,
-				adapter: this.app.vault.adapter,
+				token,
+				adapter,
 				baseline: this.settings.apiBaseline,
-				excluded,
+				resolved: [...resolved].map(([path, content]) => ({
+					path,
+					content,
+				})),
 				message,
-				onProgress,
+				onProgress: (msg) =>
+					resolveNotice.setMessage(t("apiSyncProgress", { n: msg })),
 			});
 
-			// Persist the new baseline so the next sync diffs against the state we
-			// just agreed on. Do this BEFORE any other reporting.
-			this.settings.apiBaseline = result.newBaseline;
+			// Persist the updated baseline so resolved paths are now in sync.
+			this.settings.apiBaseline = res.newBaseline;
 			await this.saveSettings();
 
 			await log(
-				`RESULT: pulled=${result.pulled.length}, pushed=${result.pushed.length}, ` +
-					`deletedLocal=${result.deletedLocal.length}, deletedRemote=${result.deletedRemote.length}, ` +
-					`conflicts=${result.conflicts.length}, committed=${result.committed}, ` +
-					`baselineSaved=true`
+				`RESOLVED: ${resolved.size}, committed=${res.committed}, baselineSaved=true`
 			);
-			if (result.conflicts.length > 0) {
-				await log(`CONFLICTS: ${result.conflicts.join(", ")}`);
-			}
-
-			new Notice(
-				t("apiSyncDone", {
-					pulled: result.pulled.length,
-					pushed: result.pushed.length,
-					delLocal: result.deletedLocal.length,
-					delRemote: result.deletedRemote.length,
-				}),
-				10_000
-			);
-			if (result.conflicts.length > 0) {
-				new Notice(
-					t("apiSyncConflicts", { n: result.conflicts.length }),
-					10_000
-				);
-			}
-			new Notice(t("apiSyncLogSaved", { file: logPath }), 10_000);
+			new Notice(t("apiSyncResolved", { n: resolved.size }), 10_000);
 		} catch (err) {
-			console.error("Git Vault Sync API sync failed", err);
 			const e = err as Error;
-			await log(`ERROR: ${e?.message ?? String(err)}`);
-			if (e?.stack) await log(`STACK: ${e.stack}`);
-			new Notice(t("apiSyncFailed", { msg: e?.message ?? String(err) }));
+			console.error("Git Vault Sync: commitResolutions failed", err);
+			await log(`RESOLVE-ERROR: ${e?.message ?? String(err)}`);
+			new Notice(
+				t("apiSyncResolveFailed", { msg: e?.message ?? String(err) })
+			);
 		} finally {
-			progressNotice?.hide();
+			resolveNotice.hide();
 		}
 	}
 
@@ -711,6 +800,15 @@ export default class GitSyncPlugin extends Plugin {
 		// Keep the error indicator sticky until the next sync attempt.
 		if (this.lastSyncError) {
 			this.setStatus("error");
+			return;
+		}
+		// Under the API engine there is no local .git to inspect, and
+		// countChanges() would touch git internals — so don't call it. Use the
+		// "no count" sentinel (-1): the idle state then shows the clean icon and
+		// the last-sync time, without a (meaningless) pending-changes number.
+		if (this.effectiveEngine() === "api") {
+			this.changeCount = -1;
+			this.setStatus("idle");
 			return;
 		}
 		try {
