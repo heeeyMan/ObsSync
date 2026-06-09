@@ -144,6 +144,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 		en: "Could not merge on the mobile (shallow) clone — the histories diverged too far to find a common base. Sync from desktop once to reconcile them.",
 		ru: "Не удалось выполнить слияние на мобильном (поверхностном) клоне — истории разошлись слишком сильно, общая база не найдена. Один раз синхронизируйтесь с десктопа, чтобы их свести.",
 	},
+	errNoRemote: {
+		en: "Set a repository URL in settings first.",
+		ru: "Сначала укажите репозиторий в настройках.",
+	},
 
 	// --- settings ---
 	syncNow: { en: "Sync now", ru: "Синхронизировать" },
