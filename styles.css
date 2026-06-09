@@ -182,6 +182,14 @@
 	color: var(--text-error);
 }
 
+/* Token field + inline Authorize button share one settings row. Let the input
+   flex to fill the available width while the button keeps its intrinsic size,
+   so the field never collapses to nothing next to the button. */
+.gitsync-token-input {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
 /* --- Mobile: bigger touch targets and tighter settings --- */
 @media (max-width: 600px) {
 	.gitsync-review-row {
@@ -200,6 +208,12 @@
 
 	.gitsync-exclude-textarea {
 		min-height: 120px;
+	}
+
+	/* Keep the token input from collapsing when the Authorize button shares
+	   the (narrower) mobile settings row. */
+	.gitsync-token-input {
+		min-width: 6em;
 	}
 }
 
