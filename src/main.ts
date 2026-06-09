@@ -10,6 +10,10 @@ import { ReviewModal } from "./review-modal";
 import { dryRunPull, parseGitHubRepo } from "./github-sync";
 import { setLanguage, t } from "./i18n";
 
+/** Vault-root markdown log for the experimental API-pull diagnostic. It is
+ *  rewritten in full at each stage so the last line survives a mid-run crash. */
+const APITEST_LOG_FILE = "GitVaultSync-apitest.md";
+
 export default class GitSyncPlugin extends Plugin {
 	settings!: GitSyncSettings;
 	git!: GitManager;
@@ -42,6 +46,12 @@ export default class GitSyncPlugin extends Plugin {
 
 		this.addRibbonIcon("list-checks", t("ribbonReview"), () => {
 			this.openReview();
+		});
+
+		// Experimental diagnostic. A ribbon icon is the most reliable trigger on
+		// mobile (no command palette hunting); the command below still exists too.
+		this.addRibbonIcon("flask-conical", t("cmdApiPullTest"), () => {
+			void this.apiPullTest();
 		});
 
 		this.statusBarEl = this.addStatusBarItem();
@@ -386,40 +396,119 @@ export default class GitSyncPlugin extends Plugin {
 	 * Git Data API client and report counts/sizes WITHOUT writing anything to
 	 * the vault. Meant to be run on a phone against a large repo to confirm the
 	 * new engine pulls one blob at a time without OOMing.
+	 *
+	 * On mobile a transient Notice is easy to miss and the app can be killed
+	 * mid-run, so the authoritative record is a markdown log file at the vault
+	 * root (`APITEST_LOG_FILE`). Each stage appends a timestamped line and
+	 * REWRITES the whole file, awaiting the write before the next heavy step —
+	 * so if the app dies mid-pull, the last line on disk shows how far we got
+	 * (e.g. "PROGRESS: 150/372 blobs…").
 	 */
 	async apiPullTest(): Promise<void> {
-		if (!this.settings.remoteUrl || !this.settings.token) {
-			new Notice(t("errNoRemote"));
-			return;
-		}
-		const parsed = parseGitHubRepo(this.settings.remoteUrl);
-		if (!parsed) {
-			new Notice(t("apiPullBadUrl"));
-			return;
-		}
-		const branch = this.settings.branch || "main";
-		// Persistent, updatable Notice so progress is visible on mobile (where
-		// the status bar is hidden). Hidden in `finally`.
-		const progressNotice = new Notice(t("apiPullStarting"), 0);
+		const logPath = APITEST_LOG_FILE;
+		const lines: string[] = [];
+		const stamp = () => new Date().toISOString();
+		// Rewrite the whole file from the accumulated lines. Awaited by callers
+		// before any further heavy work so the stage is flushed to disk first.
+		const log = async (line: string) => {
+			lines.push(`- ${stamp()}  ${line}`);
+			try {
+				await this.app.vault.adapter.write(
+					logPath,
+					`# Git Vault Sync — API pull test\n\n${lines.join("\n")}\n`
+				);
+			} catch (e) {
+				// Never let a logging failure mask the real diagnostic.
+				console.error("Git Vault Sync apiPullTest log write failed", e);
+			}
+		};
+
+		// Immediate, unmissable proof the command fired — Notice + on-disk
+		// STARTED line — BEFORE any validation or network call.
+		new Notice(t("apiPullStarting"), 0);
+		await log("STARTED");
+
+		let progressNotice: Notice | null = null;
 		try {
+			if (!this.settings.remoteUrl || !this.settings.token) {
+				await log("ERROR: remote URL or token not configured");
+				new Notice(t("errNoRemote"));
+				return;
+			}
+			const parsed = parseGitHubRepo(this.settings.remoteUrl);
+			if (!parsed) {
+				await log("ERROR: cannot parse GitHub owner/repo from remote URL");
+				new Notice(t("apiPullBadUrl"));
+				return;
+			}
+			const branch = this.settings.branch || "main";
+			// Params WITHOUT the token.
+			await log(
+				`PARAMS: owner=${parsed.owner}, repo=${parsed.repo}, branch=${branch}`
+			);
+
+			// Persistent, updatable Notice so progress is visible on mobile
+			// (where the status bar is hidden). Hidden in `finally`.
+			progressNotice = new Notice(t("apiPullStarting"), 0);
+
+			// The engine's first onProgress is the pre-tree "fetching" message;
+			// the first per-blob message (the first that carries an x/N count) is
+			// our "tree received" marker. Subsequent ones are throttled to ~every
+			// 50th to keep the log a stage trail rather than a flood. The engine
+			// already controls its own emit cadence; we additionally throttle the
+			// disk writes here.
+			let fetchLogged = false;
+			let treeLogged = false;
+			let blobCalls = 0;
 			const result = await dryRunPull({
 				owner: parsed.owner,
 				repo: parsed.repo,
 				branch,
 				token: this.settings.token,
-				onProgress: (msg) =>
-					progressNotice.setMessage(t("apiPullProgress", { n: msg })),
+				onProgress: (msg) => {
+					progressNotice?.setMessage(t("apiPullProgress", { n: msg }));
+					// Fire-and-forget disk writes from inside the tight loop:
+					// awaiting here would serialize every blob. The throttle keeps
+					// them rare; the final DONE/ERROR lines are awaited.
+					const isBlobMsg = msg.includes("/");
+					if (!fetchLogged && !isBlobMsg) {
+						fetchLogged = true;
+						void log(`FETCH: ${msg}`);
+					} else if (isBlobMsg) {
+						blobCalls++;
+						if (!treeLogged) {
+							treeLogged = true;
+							void log(`TREE: ${msg} (tree received)`);
+						} else if (blobCalls % 50 === 0) {
+							void log(`PROGRESS: ${msg}`);
+						}
+					}
+				},
 			});
+
 			const mb = (result.totalBytes / 1_048_576).toFixed(1);
 			const maxmb = (result.maxBlobBytes / 1_048_576).toFixed(1);
-			let msg = t("apiPullDone", { blobs: result.blobs, mb, maxmb });
+			await log(
+				`DONE: blobs=${result.blobs}, totalMB=${mb}, maxBlobMB=${maxmb}` +
+					(result.truncated ? ", truncated=true" : "")
+			);
+
+			let msg = t("apiPullDone", {
+				blobs: result.blobs,
+				mb,
+				maxmb,
+			});
 			if (result.truncated) msg += t("apiPullTruncated");
 			new Notice(msg, 10_000);
+			new Notice(t("apiPullLogSaved", { file: logPath }), 10_000);
 		} catch (err) {
 			console.error("Git Vault Sync API pull test failed", err);
-			new Notice(t("apiPullFailed", { msg: (err as Error).message }));
+			const e = err as Error;
+			await log(`ERROR: ${e?.message ?? String(err)}`);
+			if (e?.stack) await log(`STACK: ${e.stack}`);
+			new Notice(t("apiPullFailed", { msg: e?.message ?? String(err) }));
 		} finally {
-			progressNotice.hide();
+			progressNotice?.hide();
 		}
 	}
 

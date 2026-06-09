@@ -48,6 +48,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 		en: "Git Vault Sync: API pull failed — {msg}",
 		ru: "Git Vault Sync: ошибка API-загрузки — {msg}",
 	},
+	apiPullLogSaved: {
+		en: "Git Vault Sync: result written to {file}",
+		ru: "Git Vault Sync: результат записан в {file}",
+	},
 
 	// --- status-bar menu ---
 	menuSyncNow: { en: "Sync now", ru: "Синхронизировать сейчас" },
