@@ -103,6 +103,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	progApplying: { en: "Applying resolutions…", ru: "Применение решений…" },
 	progStagingMerge: { en: "Staging merge…", ru: "Подготовка слияния…" },
 	progMergeCommit: { en: "Creating merge commit…", ru: "Создание merge-коммита…" },
+	progDeepening: {
+		en: "Deepening shallow history…",
+		ru: "Углубление истории…",
+	},
 	progInit: { en: "Initializing repository…", ru: "Инициализация репозитория…" },
 	progLinking: { en: "Linking remote…", ru: "Привязка сервера…" },
 	progCheckout: { en: "Checking out remote branch…", ru: "Переключение на ветку сервера…" },
@@ -135,6 +139,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	errIndexVersion: {
 		en: "The Git index was in an unsupported format and was rebuilt. Please try syncing again.",
 		ru: "Индекс Git был в неподдерживаемом формате и пересоздан. Повторите синхронизацию.",
+	},
+	errShallowMerge: {
+		en: "Could not merge on the mobile (shallow) clone — the histories diverged too far to find a common base. Sync from desktop once to reconcile them.",
+		ru: "Не удалось выполнить слияние на мобильном (поверхностном) клоне — истории разошлись слишком сильно, общая база не найдена. Один раз синхронизируйтесь с десктопа, чтобы их свести.",
 	},
 
 	// --- settings ---
