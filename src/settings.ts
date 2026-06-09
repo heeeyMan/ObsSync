@@ -39,6 +39,14 @@ export interface GitSyncSettings {
 	/** Interface language ("auto" follows Obsidian). */
 	language: LangPref;
 	/**
+	 * Which sync engine to use:
+	 * - "auto"  → API on mobile, Git (isomorphic-git) on desktop (recommended);
+	 * - "git"   → always isomorphic-git;
+	 * - "api"   → always the GitHub Git Data API engine (github-sync.ts).
+	 * The API engine avoids out-of-memory on large repos on mobile.
+	 */
+	syncEngine: "auto" | "git" | "api";
+	/**
 	 * Persistent baseline for the experimental API sync engine (github-sync.ts):
 	 * the confirmed common state (remote commit + per-path blob shas) after the
 	 * last successful API sync. Stored in data.json; not shown in the UI.
@@ -62,6 +70,7 @@ export const DEFAULT_SETTINGS: GitSyncSettings = {
 	// first run in loadSettings() (the config folder is not always ".obsidian").
 	excludePaths: [".DS_Store", ".trash/"].join("\n"),
 	language: "auto",
+	syncEngine: "auto",
 	apiBaseline: { commitSha: null, shas: {} },
 };
 
@@ -305,6 +314,24 @@ export class GitSyncSettingTab extends PluginSettingTab {
 		// --- 4. Repository ---
 		new Setting(containerEl).setName(t("headRepo")).setHeading();
 
+		new Setting(containerEl)
+			.setName(t("setEngineName"))
+			.setDesc(t("setEngineDesc"))
+			.addDropdown((dd) =>
+				dd
+					.addOption("auto", t("engineAuto"))
+					.addOption("git", t("engineGit"))
+					.addOption("api", t("engineApi"))
+					.setValue(s.syncEngine)
+					.onChange(async (value) => {
+						s.syncEngine = value as GitSyncSettings["syncEngine"];
+						await this.plugin.saveSettings();
+						// Re-render so the Initialize row reflects whether the
+						// effective engine is API (where init isn't needed).
+						this.display();
+					})
+			);
+
 		const exclude = new Setting(containerEl)
 			.setName(t("setExcludeName"))
 			.setDesc(t("setExcludeDesc"))
@@ -319,7 +346,7 @@ export class GitSyncSettingTab extends PluginSettingTab {
 		// Stack the textarea full-width below its label.
 		exclude.settingEl.addClass("gitsync-setting-stacked");
 
-		new Setting(containerEl)
+		const initSetting = new Setting(containerEl)
 			.setName(t("setInitName"))
 			.setDesc(t("setInitDesc"))
 			.addButton((b) => {
@@ -358,6 +385,12 @@ export class GitSyncSettingTab extends PluginSettingTab {
 						})();
 					});
 			});
+		// Under the API engine the first Sync establishes state from an empty
+		// baseline — there's no repo to init/clone — so hide the button.
+		initSetting.settingEl.toggleClass(
+			"gitsync-hidden",
+			this.plugin.effectiveEngine() === "api"
+		);
 
 		new Setting(containerEl)
 			.setName(t("setLangName"))

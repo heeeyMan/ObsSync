@@ -503,12 +503,33 @@ export interface ApiSyncBaseline {
 	shas: Record<string, string>;
 }
 
+/**
+ * Everything the caller needs to resolve one conflicting path interactively
+ * WITHOUT the engine having to hold any content. `remoteSha`/`baseSha` let the
+ * UI lazily fetch the relevant blob bytes via {@link getBlob} (the local side is
+ * already on disk), while `localDeleted`/`remoteDeleted` describe the *kind* of
+ * clash (modify/modify vs. delete/modify vs. modify/delete) so the UI can frame
+ * the choice correctly.
+ *
+ * - `remoteSha`: the git blob sha on the remote, or `null` if deleted there.
+ * - `baseSha`: the path's sha in the last-synced baseline, or `null` if it
+ *   wasn't tracked then (added on both sides).
+ * - `localDeleted` / `remoteDeleted`: whether the path was removed on that side.
+ */
+export interface ConflictInfo {
+	path: string;
+	remoteSha: string | null;
+	baseSha: string | null;
+	localDeleted: boolean;
+	remoteDeleted: boolean;
+}
+
 export interface ApiSyncResult {
 	pulled: string[];
 	pushed: string[];
 	deletedLocal: string[];
 	deletedRemote: string[];
-	conflicts: string[];
+	conflicts: ConflictInfo[];
 	committed: boolean;
 	newBaseline: ApiSyncBaseline;
 }
@@ -667,12 +688,28 @@ export async function apiSync(opts: {
 		// two sides converged — no conflict, and nothing to pull or push.
 	}
 
+	// Enrich each clash with the data needed for interactive resolution: the
+	// remote/base blob shas (so the UI can lazily fetch content) and which side
+	// deleted the path. The classification above is unchanged — we only describe
+	// what we already decided is a conflict.
+	const conflictInfos: ConflictInfo[] = [...conflicts].sort().map((p) => {
+		const remoteSha = p in remoteShas ? remoteShas[p] : null;
+		const baseSha = p in baseline.shas ? baseline.shas[p] : null;
+		return {
+			path: p,
+			remoteSha,
+			baseSha,
+			localDeleted: !(p in localShas),
+			remoteDeleted: remoteSha === null,
+		};
+	});
+
 	const result: ApiSyncResult = {
 		pulled: [],
 		pushed: [],
 		deletedLocal: [],
 		deletedRemote: [],
-		conflicts: [...conflicts].sort(),
+		conflicts: conflictInfos,
 		committed: false,
 		newBaseline: { commitSha: baseline.commitSha, shas: {} },
 	};
@@ -759,6 +796,109 @@ export async function apiSync(opts: {
 
 	result.newBaseline = { commitSha: newCommit, shas: nb };
 	return result;
+}
+
+/**
+ * Stage 3: apply user conflict resolutions and commit them.
+ *
+ * Each entry in `resolved` is a path the user resolved: `content != null` is the
+ * chosen final bytes (local, remote, or a manual merge); `content == null` means
+ * "delete this path" (locally and on the remote). The flow:
+ *
+ *  1. Write resolutions to DISK first via the adapter (so the working tree and
+ *     the commit we build agree): bytes → writeVaultFile, null → remove if it
+ *     exists locally.
+ *  2. RE-READ the remote head ({@link getBranchHead}) — the remote may have
+ *     advanced since `apiSync` ran (another device pushed, or apiSync itself
+ *     pushed non-conflict changes). We build the commit on top of the *current*
+ *     remote commit/tree so the ref update fast-forwards.
+ *  3. createBlob per resolved file (one at a time, bytes dropped immediately),
+ *     one createTree on top of the live remote tree (resolved shas; deletions as
+ *     sha:null), one createCommit (parent = live remote commit), updateRef.
+ *  4. Rebuild the baseline from `opts.baseline`: for each resolved path set its
+ *     new sha (gitBlobSha of the content) or delete it (content == null); set
+ *     `commitSha` to the new commit. Every other baseline entry is preserved.
+ *
+ * Memory: at most one blob's bytes are held at a time. The token is only ever an
+ * Authorization header — never logged.
+ *
+ * An empty `resolved` is a no-op: `committed=false`, baseline unchanged.
+ */
+export async function commitResolutions(opts: {
+	owner: string;
+	repo: string;
+	branch: string;
+	token: string;
+	adapter: DataAdapter;
+	baseline: ApiSyncBaseline;
+	resolved: Array<{ path: string; content: Uint8Array | null }>;
+	message?: string;
+	onProgress?: (msg: string) => void;
+}): Promise<{ committed: boolean; newBaseline: ApiSyncBaseline }> {
+	const { owner, repo, branch, token, adapter, baseline, resolved, onProgress } = opts;
+
+	// No resolutions → nothing to write, commit, or change in the baseline.
+	if (resolved.length === 0) {
+		return { committed: false, newBaseline: baseline };
+	}
+
+	// 1. Write resolutions to disk first (working tree == what we'll commit).
+	onProgress?.(t("progMerging"));
+	for (const r of resolved) {
+		if (r.content !== null) {
+			await writeVaultFile(adapter, r.path, r.content);
+		} else if (await adapter.exists(r.path)) {
+			await adapter.remove(r.path);
+		}
+	}
+
+	// 2. Re-read the live remote head so we build on top of the current tip.
+	onProgress?.(t("progFetching"));
+	const { commitSha: remoteCommit, treeSha: remoteTree } = await getBranchHead(
+		owner,
+		repo,
+		branch,
+		token,
+	);
+
+	// 3. Upload resolved blobs one at a time, then build tree + commit + ref.
+	onProgress?.(t("progPushing"));
+	const treeEntries: TreeEntryInput[] = [];
+	// Track the new blob sha per resolved path so the baseline matches exactly
+	// what we committed (no extra hashing pass, no second copy of the bytes).
+	const resolvedShas: Record<string, string> = {};
+	let pushCount = 0;
+	for (const r of resolved) {
+		if (r.content !== null) {
+			let bytes: Uint8Array | undefined = r.content;
+			const sha = await createBlob(owner, repo, token, bytes);
+			bytes = undefined;
+			treeEntries.push({ path: r.path, sha });
+			resolvedShas[r.path] = sha;
+		} else {
+			treeEntries.push({ path: r.path, sha: null });
+		}
+		pushCount++;
+		if (onProgress && pushCount % PROGRESS_EVERY === 0) onProgress(t("progPushing"));
+	}
+
+	const newTree = await createTree(owner, repo, token, remoteTree, treeEntries);
+	const message = opts.message && opts.message.trim() ? opts.message : "GitSync";
+	const newCommit = await createCommit(owner, repo, token, message, newTree, remoteCommit);
+	await updateRef(owner, repo, token, branch, newCommit, false);
+
+	// 4. Rebuild the baseline: keep everything from the prior baseline, then
+	//    apply the resolved paths (new sha, or removed when deleted).
+	const nb: Record<string, string> = { ...baseline.shas };
+	for (const r of resolved) {
+		if (r.content !== null) {
+			nb[r.path] = resolvedShas[r.path];
+		} else {
+			delete nb[r.path];
+		}
+	}
+
+	return { committed: true, newBaseline: { commitSha: newCommit, shas: nb } };
 }
 
 /** Write bytes to the vault, choosing text vs binary path like git-fs does. */

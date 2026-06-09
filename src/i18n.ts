@@ -25,10 +25,6 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 		en: "Test API pull (experimental)",
 		ru: "Тест API-загрузки (эксперимент)",
 	},
-	cmdApiSync: {
-		en: "API sync (experimental)",
-		ru: "API-синхронизация (эксперимент)",
-	},
 
 	// --- experimental Git Data API dry-run pull ---
 	apiPullBadUrl: {
@@ -58,27 +54,7 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	},
 
 	// --- experimental Git Data API full sync (pull + push) ---
-	apiSyncStarting: {
-		en: "Git Vault Sync: starting experimental API sync…",
-		ru: "Git Vault Sync: запуск экспериментальной API-синхронизации…",
-	},
 	apiSyncProgress: { en: "Git Vault Sync: {n}", ru: "Git Vault Sync: {n}" },
-	apiSyncDone: {
-		en: "Git Vault Sync: API sync OK — pulled {pulled}, pushed {pushed}, deleted local {delLocal}, deleted remote {delRemote}.",
-		ru: "Git Vault Sync: API-синхронизация OK — получено {pulled}, отправлено {pushed}, удалено локально {delLocal}, удалено на сервере {delRemote}.",
-	},
-	apiSyncConflicts: {
-		en: "Git Vault Sync: {n} file(s) in conflict — left untouched for now (interactive resolution coming in a later version).",
-		ru: "Git Vault Sync: файлов в конфликте: {n} — пока не синхронизированы (интерактивное разрешение появится позже).",
-	},
-	apiSyncFailed: {
-		en: "Git Vault Sync: API sync failed — {msg}",
-		ru: "Git Vault Sync: ошибка API-синхронизации — {msg}",
-	},
-	apiSyncLogSaved: {
-		en: "Git Vault Sync: log written to {file}",
-		ru: "Git Vault Sync: лог записан в {file}",
-	},
 
 	// --- status-bar menu ---
 	menuSyncNow: { en: "Sync now", ru: "Синхронизировать сейчас" },
@@ -319,6 +295,22 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	},
 	noticeInitReady: { en: "Git Vault Sync: repository ready", ru: "Git Vault Sync: репозиторий готов" },
 	noticeInitFailed: { en: "Git Vault Sync: init failed — {msg}", ru: "Git Vault Sync: ошибка инициализации — {msg}" },
+	setEngineName: { en: "Sync engine", ru: "Движок синхронизации" },
+	setEngineDesc: {
+		en: "Auto = API on mobile, Git on desktop. API avoids out-of-memory on large repos.",
+		ru: "Авто = API на мобильном, Git на десктопе. API не вызывает нехватку памяти на больших репозиториях.",
+	},
+	engineAuto: { en: "Auto (recommended)", ru: "Авто (рекомендуется)" },
+	engineGit: { en: "Git (isomorphic-git)", ru: "Git (isomorphic-git)" },
+	engineApi: { en: "GitHub API", ru: "GitHub API" },
+	noticeApiNoSelective: {
+		en: "Git Vault Sync: selective sync isn't available with the API engine — syncing everything.",
+		ru: "Git Vault Sync: выборочная синхронизация недоступна с API-движком — синхронизируется всё.",
+	},
+	noticeApiNoReview: {
+		en: "Git Vault Sync: Review changes isn't available with the API engine.",
+		ru: "Git Vault Sync: просмотр изменений недоступен с API-движком.",
+	},
 	setLangName: { en: "Language", ru: "Язык" },
 	setLangDesc: {
 		en: "Interface language. Auto follows Obsidian's language.",
@@ -345,6 +337,46 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	cmResolve: { en: "Resolve & sync", ru: "Разрешить и синхронизировать" },
 	cmSyncing: { en: "Syncing…", ru: "Синхронизация…" },
 	cmCancel: { en: "Cancel (abort merge)", ru: "Отмена (прервать слияние)" },
+
+	// --- API conflict modal (experimental Git Data API sync) ---
+	acmTitle: {
+		en: "Resolve {n} conflict(s)",
+		ru: "Разрешите конфликты: {n}",
+	},
+	acmIntro: {
+		en: "For each file choose which version to keep, or edit the merged result manually. Your choices are committed and pushed.",
+		ru: "Для каждого файла выберите версию или отредактируйте результат вручную. Выбор будет закоммичен и отправлен.",
+	},
+	acmBinary: {
+		en: "(binary file — preview unavailable)",
+		ru: "(бинарный файл — предпросмотр недоступен)",
+	},
+	acmLocalDeleted: {
+		en: "Keep deleted (local)",
+		ru: "Оставить удалённым (локально)",
+	},
+	acmRemoteDeleted: {
+		en: "Delete (remote)",
+		ru: "Удалить (как на сервере)",
+	},
+	acmResolve: { en: "Resolve & sync", ru: "Разрешить и синхронизировать" },
+	acmCancel: { en: "Cancel", ru: "Отмена" },
+	apiSyncResolving: {
+		en: "Git Vault Sync: applying conflict resolutions…",
+		ru: "Git Vault Sync: применение разрешений конфликтов…",
+	},
+	apiSyncResolved: {
+		en: "Git Vault Sync: {n} conflict(s) resolved.",
+		ru: "Git Vault Sync: разрешено конфликтов: {n}.",
+	},
+	apiSyncResolveCancelled: {
+		en: "Git Vault Sync: conflict resolution cancelled — nothing changed.",
+		ru: "Git Vault Sync: разрешение конфликтов отменено — изменений нет.",
+	},
+	apiSyncResolveFailed: {
+		en: "Git Vault Sync: applying resolutions failed — {msg}",
+		ru: "Git Vault Sync: ошибка применения разрешений — {msg}",
+	},
 
 	// --- review modal ---
 	rmTitle: { en: "Review changes", ru: "Просмотр изменений" },
