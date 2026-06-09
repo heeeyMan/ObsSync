@@ -241,6 +241,48 @@ export class GitManager {
 	}
 
 	/**
+	 * True when an `origin` remote with a non-empty URL is configured. A repo can
+	 * exist (HEAD resolves) yet have no origin bound — e.g. `git init` ran but the
+	 * remote was never linked — in which case the sync flow's `git.fetch` would
+	 * fail (no refspec / a null URL → the `parseRemoteUrl` "null.startsWith"
+	 * crash). We treat a missing/empty origin URL as "not ready".
+	 */
+	private async isOriginConfigured(): Promise<boolean> {
+		try {
+			const url = await git.getConfig({
+				fs: this.fs,
+				dir: this.dir,
+				path: "remote.origin.url",
+			});
+			return typeof url === "string" && url.trim().length > 0;
+		} catch {
+			return false;
+		}
+	}
+
+	/**
+	 * Make sure the repo is initialized AND bound to origin before the sync flow
+	 * runs any fetch/merge (which assume a ready repo). Idempotent: if both
+	 * conditions already hold this is a no-op; otherwise it runs the same
+	 * un-guarded {@link initializeInner} (init if needed + addRemote force + fetch
+	 * + checkout) used by the public {@link initialize}.
+	 *
+	 * MUST be called from inside the mutex (it invokes the *Inner helper directly,
+	 * never the public `initialize`, which would re-take the mutex and deadlock).
+	 * Throws a localized {@link t} `errNoRemote` when no remote URL is set, so the
+	 * user gets a clear message instead of an opaque null dereference.
+	 */
+	private async ensureInitialized(log: ProgressLog): Promise<void> {
+		const ready = (await this.isRepo()) && (await this.isOriginConfigured());
+		if (ready) return;
+		const remoteUrl = (this.getSettings().remoteUrl || "").trim();
+		if (!remoteUrl) throw new Error(t("errNoRemote"));
+		// Un-guarded: we're already under runExclusive + withIndexRecovery.
+		// initializeInner is idempotent and honors this.shallow internally.
+		await this.initializeInner(log);
+	}
+
+	/**
 	 * Verify remote URL + token + connectivity without touching the working
 	 * tree. Returns the list of remote branch names.
 	 */
@@ -343,6 +385,14 @@ export class GitManager {
 		// Load .gitignore once for this whole operation; excludeMatcher (sync)
 		// reads the cached patterns for every staging/status scan below.
 		await this.refreshGitignore();
+
+		// On a fresh/unbound vault the rest of this method (fetch/merge) assumes a
+		// ready repo and would crash inside isomorphic-git (e.g. parseRemoteUrl's
+		// "null.startsWith"). Auto-initialize first — init + link origin + fetch +
+		// checkout the remote tip — so the normal flow below runs incrementally.
+		// Idempotent and un-guarded (we're already inside the mutex), so no deadlock.
+		await this.ensureInitialized(log);
+
 		const result: SyncResult = {
 			committed: false,
 			pulled: false,
