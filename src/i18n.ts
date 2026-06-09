@@ -116,6 +116,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 		en: "Network error — check your connection and the remote URL.",
 		ru: "Сетевая ошибка — проверьте подключение и URL репозитория.",
 	},
+	errBadToken: {
+		en: "Invalid or expired token.",
+		ru: "Неверный или просроченный токен.",
+	},
 	errNotFound: {
 		en: "Remote or branch not found — check the URL and branch name.",
 		ru: "Репозиторий или ветка не найдены — проверьте URL и имя ветки.",
@@ -161,6 +165,22 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 		ru: "Это не похоже на корректный HTTPS-адрес, напр. https://github.com/user/vault.git",
 	},
 	headAuth: { en: "Authentication", ru: "Авторизация" },
+	btnAuthorize: { en: "Authorize", ru: "Авторизоваться" },
+	authorizing: { en: "Authorizing…", ru: "Авторизация…" },
+	authOk: {
+		en: "Authorized as {user} — {count} repositories",
+		ru: "Авторизованы как {user} — репозиториев: {count}",
+	},
+	authFailed: {
+		en: "GitSync: authorization failed — {msg}",
+		ru: "GitSync: ошибка авторизации — {msg}",
+	},
+	remoteSelectName: { en: "Repository", ru: "Репозиторий" },
+	remoteSelectDesc: {
+		en: "Pick a repository from your GitHub account, or enter a URL manually.",
+		ru: "Выберите репозиторий из вашего аккаунта GitHub или введите URL вручную.",
+	},
+	remoteManual: { en: "Enter manually…", ru: "Ввести вручную…" },
 	setUserName: { en: "Username", ru: "Имя пользователя" },
 	setUserDesc: { en: "Your GitHub username.", ru: "Ваше имя пользователя GitHub." },
 	setTokenName: { en: "Personal Access Token", ru: "Персональный токен (PAT)" },
