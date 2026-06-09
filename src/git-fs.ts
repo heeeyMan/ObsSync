@@ -18,7 +18,13 @@ function normalize(path: string): string {
 	let p = path.replace(/\\/g, "/");
 	while (p.startsWith("/")) p = p.slice(1);
 	if (p.endsWith("/")) p = p.slice(0, -1);
-	return p;
+	// iOS/HFS+ hands back filenames in Unicode NFD (decomposed) form, while
+	// desktop and Git store the bytes as typed (typically NFC). Without
+	// normalizing, a name like "мой"/"café" looks like two different paths
+	// across platforms, producing phantom delete+add commits and duplicates.
+	// Canonicalize every path to NFC so statusMatrix and the exclude matcher
+	// compare like with like regardless of which device wrote the file.
+	return p.normalize("NFC");
 }
 
 function basename(path: string): string {
@@ -155,12 +161,24 @@ export class GitFs {
 		throw err("ENOSYS", "symlink is not supported in an Obsidian vault");
 	}
 
+	/**
+	 * Ensure every ancestor directory of `p` exists, creating the whole chain
+	 * top-down. A checkout into a deeply nested new folder (a/b/c/d/file.md
+	 * where a/b/c don't yet exist) would otherwise fail on the missing
+	 * intermediate levels.
+	 */
 	private async ensureParent(p: string): Promise<void> {
 		const i = p.lastIndexOf("/");
 		if (i <= 0) return;
 		const parent = p.slice(0, i);
-		if (!(await this.adapter.exists(parent))) {
-			await this.adapter.mkdir(parent);
+		const segments = parent.split("/");
+		let prefix = "";
+		for (const seg of segments) {
+			if (!seg) continue;
+			prefix = prefix ? `${prefix}/${seg}` : seg;
+			if (!(await this.adapter.exists(prefix))) {
+				await this.adapter.mkdir(prefix);
+			}
 		}
 	}
 }

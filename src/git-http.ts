@@ -8,6 +8,14 @@ import type { HttpClient, GitHttpRequest, GitHttpResponse } from "isomorphic-git
  * from `app://obsidian.md`), whereas `requestUrl` is proxied through the native
  * layer (Electron on desktop, Capacitor on mobile) and is not subject to CORS.
  */
+
+/**
+ * `requestUrl` has no timeout, so a request stalled by a dropped mobile
+ * connection never settles and `sync()` hangs forever with `syncing` stuck on.
+ * Cap each request; on expiry we reject with a message `friendlyError` maps to
+ * the network error.
+ */
+const REQUEST_TIMEOUT_MS = 60_000;
 async function collectBody(
 	body: GitHttpRequest["body"]
 ): Promise<ArrayBuffer | undefined> {
@@ -24,6 +32,10 @@ async function collectBody(
 		merged.set(c, offset);
 		offset += c.byteLength;
 	}
+	// Drop references to the intermediate chunks so the GC can reclaim those
+	// copies of the packfile immediately; on a phone a push/clone body can be
+	// large and holding both the chunks and the merged buffer risks OOM.
+	chunks.length = 0;
 	return merged.buffer;
 }
 
@@ -36,13 +48,35 @@ export const obsidianHttpClient: HttpClient = {
 	}: GitHttpRequest): Promise<GitHttpResponse> {
 		const bodyBuffer = await collectBody(body);
 
-		const res = await requestUrl({
-			url,
-			method,
-			headers,
-			body: bodyBuffer,
-			throw: false,
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timeout = new Promise<never>((_, reject) => {
+			timer = setTimeout(() => {
+				reject(new Error(`ERR_TIMEOUT: request timed out after ${REQUEST_TIMEOUT_MS}ms`));
+			}, REQUEST_TIMEOUT_MS);
 		});
+
+		let res;
+		try {
+			res = await Promise.race([
+				requestUrl({
+					url,
+					method,
+					headers,
+					body: bodyBuffer,
+					throw: false,
+				}),
+				timeout,
+			]);
+		} finally {
+			if (timer) clearTimeout(timer);
+		}
+
+		// status 0 (and the empty body that comes with it) means the request
+		// never reached the server — surface it as a network failure so
+		// friendlyError maps it to errNetwork rather than a confusing HTTP error.
+		if (!res.status) {
+			throw new Error("ERR_NETWORK: request failed (no response)");
+		}
 
 		// requestUrl lowercases header names; isomorphic-git reads them
 		// case-insensitively, so pass them through as-is.

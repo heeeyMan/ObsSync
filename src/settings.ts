@@ -87,7 +87,7 @@ export class GitSyncSettingTab extends PluginSettingTab {
 		// --- 1. Authentication / connection ---
 		containerEl.createEl("h3", { text: t("headAuth") });
 
-		new Setting(containerEl)
+		const remoteSetting = new Setting(containerEl)
 			.setName(t("setRemoteName"))
 			.setDesc(t("setRemoteDesc"))
 			.addText((text) =>
@@ -99,9 +99,21 @@ export class GitSyncSettingTab extends PluginSettingTab {
 						// New remote → drop the old branch list and allow re-fetch.
 						this.branchesFetched = false;
 						this.remoteBranches = [];
+						updateRemoteHint();
 						await this.plugin.saveSettings();
 					})
 			);
+		// Light, non-blocking hint for a clearly non-HTTPS / malformed URL. We
+		// still save whatever is typed (the sync path surfaces real errors).
+		const remoteHint = remoteSetting.descEl.createDiv({
+			cls: "gitsync-setting-hint",
+		});
+		const updateRemoteHint = () => {
+			const msg = remoteUrlHint(s.remoteUrl);
+			remoteHint.setText(msg ?? "");
+			remoteHint.toggleClass("gitsync-hidden", !msg);
+		};
+		updateRemoteHint();
 
 		this.renderBranchSetting(containerEl);
 
@@ -327,17 +339,26 @@ export class GitSyncSettingTab extends PluginSettingTab {
 			);
 
 		if (this.creatingBranch) {
-			new Setting(containerEl)
+			const newBranchSetting = new Setting(containerEl)
 				.setName(t("branchNewName"))
 				.addText((text) =>
 					text
 						.setPlaceholder("feature/notes")
 						.onChange(async (value) => {
 							const name = value.trim();
-							if (name) {
-								s.branch = name;
-								await this.plugin.saveSettings();
+							// Empty input: leave the existing branch untouched and
+							// clear any error (don't save a blank name).
+							if (!name) {
+								updateBranchError(null);
+								return;
 							}
+							if (!isValidBranchName(name)) {
+								updateBranchError(t("branchInvalid"));
+								return;
+							}
+							updateBranchError(null);
+							s.branch = name;
+							await this.plugin.saveSettings();
 						})
 				)
 				.addExtraButton((b) =>
@@ -349,6 +370,14 @@ export class GitSyncSettingTab extends PluginSettingTab {
 							this.display();
 						})
 				);
+			const branchError = newBranchSetting.descEl.createDiv({
+				cls: "gitsync-setting-error",
+			});
+			const updateBranchError = (msg: string | null) => {
+				branchError.setText(msg ?? "");
+				branchError.toggleClass("gitsync-hidden", !msg);
+			};
+			updateBranchError(null);
 		}
 	}
 
@@ -370,4 +399,51 @@ export class GitSyncSettingTab extends PluginSettingTab {
 				new Notice(t("noticeConnFailed", { msg: (err as Error).message }));
 		}
 	}
+}
+
+/**
+ * Non-blocking sanity check for the remote URL. Returns a translated hint when
+ * the value looks wrong (SSH URL or obvious junk), or null when it's plausible
+ * or empty. Never blocks saving.
+ */
+function remoteUrlHint(url: string): string | null {
+	const v = url.trim();
+	if (!v) return null;
+	// SSH-style remotes (git@host:owner/repo.git) aren't supported here.
+	if (/^[\w.-]+@[\w.-]+:/.test(v) || v.startsWith("ssh://")) {
+		return t("hintRemoteSsh");
+	}
+	if (!/^https?:\/\//i.test(v)) {
+		return t("hintRemoteNotHttps");
+	}
+	// Past the scheme there should be a host with a dot (or at least a path).
+	try {
+		const parsed = new URL(v);
+		if (!parsed.hostname || !parsed.hostname.includes(".")) {
+			return t("hintRemoteNotHttps");
+		}
+	} catch {
+		return t("hintRemoteNotHttps");
+	}
+	return null;
+}
+
+/**
+ * Validate a Git branch (ref) name against the rules that matter here: no
+ * whitespace, no `~^:?*[` or `..`, no leading/trailing slash, no `.lock`
+ * suffix, no empty path components.
+ */
+function isValidBranchName(name: string): boolean {
+	if (!name) return false;
+	if (/\s/.test(name)) return false;
+	if (/[~^:?*[\\]/.test(name)) return false;
+	if (name.includes("..")) return false;
+	if (name.startsWith("/") || name.endsWith("/")) return false;
+	if (name.startsWith(".") || name.endsWith(".")) return false;
+	if (name.endsWith(".lock")) return false;
+	if (name.includes("//")) return false;
+	if (name.includes("@{")) return false;
+	// eslint-disable-next-line no-control-regex
+	if (/[\x00-\x20\x7f]/.test(name)) return false;
+	return true;
 }

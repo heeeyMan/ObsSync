@@ -28,11 +28,17 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	// --- status bar ---
 	statusSyncing: { en: "syncing…", ru: "синхронизация…" },
 	statusError: { en: "error", ru: "ошибка" },
+	statusConflict: { en: "conflict", ru: "конфликт" },
 	tipSyncing: { en: "GitSync: syncing…", ru: "GitSync: синхронизация…" },
 	tipError: {
 		en: "GitSync: last sync failed — click to retry",
 		ru: "GitSync: последняя синхронизация не удалась — нажмите, чтобы повторить",
 	},
+	tipConflict: {
+		en: "GitSync: merge conflict — tap to resolve",
+		ru: "GitSync: конфликт слияния — нажмите, чтобы разрешить",
+	},
+	menuResolve: { en: "Resolve conflict", ru: "Разрешить конфликт" },
 	tipChanges: {
 		en: "GitSync: {n} change(s) to sync · last sync {last} · click for options",
 		ru: "GitSync: изменений к синхронизации: {n} · последняя {last} · нажмите для меню",
@@ -118,6 +124,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 		en: "Push rejected: the remote changed during sync. Run Sync again.",
 		ru: "Отправка отклонена: сервер изменился во время синхронизации. Запустите синхронизацию снова.",
 	},
+	errRestoreFailed: {
+		en: "Could not restore your deselected edits: {files}. Check disk space and recover them manually.",
+		ru: "Не удалось восстановить ваши невыбранные правки: {files}. Проверьте свободное место и восстановите их вручную.",
+	},
 
 	// --- settings ---
 	setRemoteName: { en: "Remote URL", ru: "URL репозитория" },
@@ -138,6 +148,18 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	},
 	branchFetching: { en: "GitSync: fetching branches…", ru: "GitSync: получение веток…" },
 	branchDone: { en: "Done", ru: "Готово" },
+	branchInvalid: {
+		en: "Invalid branch name. Avoid spaces, ~^:?*[ \\, '..', leading/trailing '/' or '.', and a '.lock' suffix.",
+		ru: "Недопустимое имя ветки. Не используйте пробелы, ~^:?*[ \\, «..», слэш или точку в начале/конце и суффикс «.lock».",
+	},
+	hintRemoteSsh: {
+		en: "This looks like an SSH URL. GitSync needs an HTTPS URL (https://…) with a Personal Access Token.",
+		ru: "Похоже на SSH-адрес. GitSync нужен HTTPS-адрес (https://…) и персональный токен (PAT).",
+	},
+	hintRemoteNotHttps: {
+		en: "This doesn't look like a valid HTTPS URL, e.g. https://github.com/user/vault.git",
+		ru: "Это не похоже на корректный HTTPS-адрес, напр. https://github.com/user/vault.git",
+	},
 	headAuth: { en: "Authentication", ru: "Авторизация" },
 	setUserName: { en: "Username", ru: "Имя пользователя" },
 	setUserDesc: { en: "Your GitHub username.", ru: "Ваше имя пользователя GitHub." },

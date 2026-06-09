@@ -27,6 +27,9 @@ export class ConflictModal extends Modal {
 	private finished = false;
 	/** True while completeMerge is running, to block a racing abort on close. */
 	private resolving = false;
+	/** Optional callback invoked once when the modal closes (used by the plugin
+	 *  to drop its reference). */
+	onCloseHook?: () => void;
 
 	constructor(
 		app: App,
@@ -39,11 +42,16 @@ export class ConflictModal extends Modal {
 	}
 
 	async onOpen() {
-		const { contentEl, titleEl } = this;
+		const { contentEl, titleEl, modalEl } = this;
+		modalEl.addClass("gitsync-conflict-modal");
 		titleEl.setText(t("cmTitle", { n: this.conflict.files.length }));
-		contentEl.createEl("p", { text: t("cmIntro") });
 
-		const loading = contentEl.createEl("p", { text: t("cmLoading") });
+		// Scrollable body holds the intro + per-file editors; the footer with
+		// the action buttons is pinned below so it stays reachable on mobile.
+		const body = contentEl.createDiv({ cls: "gitsync-conflict-body" });
+		body.createEl("p", { text: t("cmIntro") });
+
+		const loading = body.createEl("p", { text: t("cmLoading") });
 		try {
 			for (const filepath of this.conflict.files) {
 				const [ours, theirs, working] = await Promise.all([
@@ -66,10 +74,11 @@ export class ConflictModal extends Modal {
 		loading.remove();
 
 		for (const state of this.states) {
-			this.renderFile(contentEl, state);
+			this.renderFile(body, state);
 		}
 
-		new Setting(contentEl)
+		const footer = contentEl.createDiv({ cls: "gitsync-conflict-footer" });
+		new Setting(footer)
 			.addButton((b) =>
 				b
 					.setButtonText(t("cmResolve"))
@@ -169,6 +178,7 @@ export class ConflictModal extends Modal {
 
 	onClose() {
 		this.contentEl.empty();
+		this.onCloseHook?.();
 		// Dismissed (Esc/click-outside) without resolving and not mid-resolve:
 		// abort so the vault isn't left half-merged. Restore deselected edits
 		// the merge overwrote.
