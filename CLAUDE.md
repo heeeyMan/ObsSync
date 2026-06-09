@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for working on **ObsSync**, a one-click Git sync plugin for Obsidian
+Guidance for working on **GitSync**, a one-click Git sync plugin for Obsidian
 with conflict resolution. Works on desktop **and mobile**.
 
 ## Big picture
@@ -19,12 +19,13 @@ the plugin's `data.json` (plaintext — see *Security*).
 | File | Responsibility |
 | --- | --- |
 | `main.ts` | Plugin entry: ribbon icons, commands, status bar (+ menu), auto-sync timer, orchestrates `sync()` and opens the modals. |
-| `settings.ts` | `ObsSyncSettings`, defaults, and the settings tab UI. |
+| `settings.ts` | `GitSyncSettings`, defaults, and the settings tab UI. |
 | `git.ts` | `GitManager` — all isomorphic-git logic: `sync`, `fetchAndMerge`, `pushLoop`, `completeMerge`, `initialize`, `listChanges`, staging, excludes, error mapping. |
 | `git-fs.ts` | `GitFs` — adapts Obsidian's `vault.adapter` to the `fs` interface isomorphic-git expects (binary/text, `stat`, path normalization). |
 | `git-http.ts` | `obsidianHttpClient` — HTTP client for isomorphic-git built on Obsidian's `requestUrl` (bypasses CORS). |
 | `conflict-modal.ts` | `ConflictModal` — per-file conflict resolution (local / remote / manual edit), then `completeMerge`. |
 | `review-modal.ts` | `ReviewModal` — commit preview with checkboxes; runs a selective `sync(only)`. |
+| `i18n.ts` | `t(key, vars?)` + `setLanguage(pref)` — EN/RU string table. Language follows the "Language" setting (`auto` → Obsidian's UI language). All user-facing strings go through `t()`. |
 
 ## Sync flow (`GitManager.sync`)
 
@@ -78,7 +79,7 @@ assert on the resulting trees) — this is the fastest way to verify changes to
 `git.ts` without launching Obsidian. The Obsidian-only layers (`GitFs`,
 `requestUrl` HTTP, modals) must be tested live in a vault.
 
-Dev install: symlink the project into a vault's `.obsidian/plugins/obssync/`.
+Dev install: symlink the project into a vault's `.obsidian/plugins/gitsync/`.
 Reload the plugin (toggle off/on) after each rebuild to load the new `main.js`.
 
 ## Security

@@ -1,7 +1,7 @@
 {
-	"name": "obssync",
+	"name": "gitsync",
 	"version": "0.1.0",
-	"description": "One-click Git sync for Obsidian with conflict resolution.",
+	"description": "GitSync — one-click Git sync for Obsidian with conflict resolution (EN/RU).",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {

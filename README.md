@@ -1,11 +1,11 @@
-# ObsSync
+# GitSync
 
 One-click Git sync for [Obsidian](https://obsidian.md), with interactive conflict
 resolution, on **desktop and mobile**. Push and pull your whole vault to a Git
 remote (GitHub via HTTPS token) with a single button — and pick exactly what
 goes into each commit.
 
-ObsSync is a pure-JavaScript plugin built on
+GitSync is a pure-JavaScript plugin built on
 [isomorphic-git](https://isomorphic-git.org), so it needs no system `git` and
 works on Android/iOS as well as desktop.
 
@@ -33,16 +33,16 @@ works on Android/iOS as well as desktop.
 
 ## Installation (manual)
 
-ObsSync is not in the community plugin store. To install:
+GitSync is not in the community plugin store. To install:
 
 1. Build the plugin (see *Building from source*) or download a release.
 2. Copy `main.js`, `manifest.json`, and `styles.css` into
-   `<your-vault>/.obsidian/plugins/obssync/`.
-3. In Obsidian: **Settings → Community plugins**, enable **ObsSync**.
+   `<your-vault>/.obsidian/plugins/gitsync/`.
+3. In Obsidian: **Settings → Community plugins**, enable **GitSync**.
 
 ## Configuration
 
-Open **Settings → ObsSync** and fill in:
+Open **Settings → GitSync** and fill in:
 
 | Setting | Description |
 | --- | --- |
@@ -53,11 +53,11 @@ Open **Settings → ObsSync** and fill in:
 | Author name / email | Written into commits |
 | Commit message | Template; `{{date}}` is replaced with a timestamp |
 
-Run **ObsSync: Test connection to remote** from the command palette to verify
+Run **GitSync: Test connection to remote** from the command palette to verify
 the URL and token.
 
 > ⚠️ **Security:** the token is stored in plaintext in
-> `.obsidian/plugins/obssync/data.json`. If your vault itself is a Git repo,
+> `.obsidian/plugins/gitsync/data.json`. If your vault itself is a Git repo,
 > make sure that file is `.gitignore`d so the token is never committed.
 
 ## Usage
@@ -69,7 +69,7 @@ the URL and token.
 - **Resolve conflicts** — if a merge conflicts, the resolution dialog opens
   automatically. Choose per file: *Use local*, *Use remote*, or *Edit
   manually*, then **Resolve & sync**. **Cancel** aborts the merge cleanly.
-- **Initialize / link a repo** — on a fresh vault, **Settings → ObsSync →
+- **Initialize / link a repo** — on a fresh vault, **Settings → GitSync →
   Initialize** runs `git init`, links the remote, fetches, and checks out the
   remote branch.
 
@@ -84,7 +84,7 @@ npm run build   # type-check + production bundle → main.js
 For development, symlink the project into a test vault so rebuilds are picked up:
 
 ```bash
-ln -s "$(pwd)" /path/to/Vault/.obsidian/plugins/obssync
+ln -s "$(pwd)" /path/to/Vault/.obsidian/plugins/gitsync
 ```
 
 ## Architecture

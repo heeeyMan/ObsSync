@@ -1,39 +1,39 @@
-/* ObsSync styles */
+/* GitSync styles */
 
-.obssync-status-bar {
+.gitsync-status-bar {
 	cursor: pointer;
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
 }
 
-.obssync-status-icon {
+.gitsync-status-icon {
 	display: inline-flex;
 	align-items: center;
 }
 
-.obssync-status-icon .svg-icon {
+.gitsync-status-icon .svg-icon {
 	width: 16px;
 	height: 16px;
 }
 
-.obssync-status-text:empty {
+.gitsync-status-text:empty {
 	display: none;
 }
 
-.obssync-status-bar--syncing {
+.gitsync-status-bar--syncing {
 	color: var(--text-accent);
 }
 
-.obssync-status-bar--syncing .obssync-status-icon .svg-icon {
-	animation: obssync-spin 1s linear infinite;
+.gitsync-status-bar--syncing .gitsync-status-icon .svg-icon {
+	animation: gitsync-spin 1s linear infinite;
 }
 
-.obssync-status-bar--error {
+.gitsync-status-bar--error {
 	color: var(--text-error);
 }
 
-@keyframes obssync-spin {
+@keyframes gitsync-spin {
 	from {
 		transform: rotate(0deg);
 	}
@@ -42,7 +42,7 @@
 	}
 }
 
-.obssync-conflict-editor {
+.gitsync-conflict-editor {
 	width: 100%;
 	min-height: 160px;
 	font-family: var(--font-monospace);
@@ -50,7 +50,7 @@
 	white-space: pre;
 }
 
-.obssync-conflict-preview {
+.gitsync-conflict-preview {
 	max-height: 240px;
 	overflow: auto;
 	font-size: var(--font-ui-smaller);
@@ -59,17 +59,17 @@
 	border-radius: 6px;
 }
 
-.obssync-hidden {
+.gitsync-hidden {
 	display: none;
 }
 
-.obssync-exclude-textarea {
+.gitsync-exclude-textarea {
 	width: 100%;
 	font-family: var(--font-monospace);
 	font-size: var(--font-ui-smaller);
 }
 
-.obssync-review-list {
+.gitsync-review-list {
 	max-height: 50vh;
 	overflow-y: auto;
 	margin: 8px 0;
@@ -77,7 +77,7 @@
 	border-radius: 6px;
 }
 
-.obssync-review-row {
+.gitsync-review-row {
 	display: flex;
 	align-items: center;
 	gap: 8px;
@@ -86,20 +86,20 @@
 	border-bottom: 1px solid var(--background-modifier-border);
 }
 
-.obssync-review-row:last-child {
+.gitsync-review-row:last-child {
 	border-bottom: none;
 }
 
-.obssync-review-row:hover {
+.gitsync-review-row:hover {
 	background: var(--background-modifier-hover);
 }
 
-.obssync-review-path {
+.gitsync-review-path {
 	font-size: var(--font-ui-small);
 	word-break: break-all;
 }
 
-.obssync-badge {
+.gitsync-badge {
 	flex: 0 0 auto;
 	width: 18px;
 	text-align: center;
@@ -110,15 +110,15 @@
 	color: var(--text-on-accent);
 }
 
-.obssync-badge--added {
+.gitsync-badge--added {
 	background: var(--color-green);
 }
 
-.obssync-badge--modified {
+.gitsync-badge--modified {
 	background: var(--color-yellow);
 	color: var(--text-normal);
 }
 
-.obssync-badge--deleted {
+.gitsync-badge--deleted {
 	background: var(--color-red);
 }
