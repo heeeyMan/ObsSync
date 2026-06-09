@@ -3,6 +3,8 @@
  * value. The active language is chosen from the plugin's "Language" setting,
  * which defaults to following Obsidian's own UI language.
  */
+import { getLanguage } from "obsidian";
+
 export type Lang = "en" | "ru";
 export type LangPref = "auto" | Lang;
 
@@ -303,9 +305,9 @@ export function setLanguage(pref: LangPref): void {
 		current = pref;
 		return;
 	}
-	// Auto: follow Obsidian's UI language (stored in localStorage).
-	const obsidianLang = window.localStorage.getItem("language");
-	current = obsidianLang === "ru" ? "ru" : "en";
+	// Auto: follow Obsidian's UI language via the public API.
+	const obsidianLang = getLanguage();
+	current = obsidianLang === "ru" || obsidianLang.startsWith("ru") ? "ru" : "en";
 }
 
 /** Translate a key, substituting `{name}` placeholders from `vars`. */
