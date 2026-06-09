@@ -1,4 +1,4 @@
-# Testing GitSync
+# Testing Git Vault Sync
 
 Testing is two-layered. **Git semantics** (merge / commit / staging / selective
 restore / path normalization) run offline against the real isomorphic-git. The
@@ -30,13 +30,13 @@ npm run build     # tsc + esbuild → main.js
 ```
 
 Symlink the project into a vault's plugin folder (folder name must match the
-manifest `id`, `gitsync`):
+manifest `id`, `git-vault-sync`):
 
 ```bash
-ln -s "$(pwd)" "/path/to/TestVault/.obsidian/plugins/gitsync"
+ln -s "$(pwd)" "/path/to/TestVault/.obsidian/plugins/git-vault-sync"
 ```
 
-Then in Obsidian: Settings → Community plugins → enable **GitSync**. After every
+Then in Obsidian: Settings → Community plugins → enable **Git Vault Sync**. After every
 `npm run build`, toggle the plugin off/on to load the new `main.js` (or use
 `npm run dev` for a watch build, still toggling to reload).
 
@@ -49,7 +49,7 @@ Obsidian mobile can't symlink, so copy the three build artifacts into the
 vault's plugin folder. The vault must be reachable from the phone — either it
 already syncs (iCloud / the very repo you're testing) or you copy files over.
 
-You need exactly these three files in `<Vault>/.obsidian/plugins/gitsync/`:
+You need exactly these three files in `<Vault>/.obsidian/plugins/git-vault-sync/`:
 
 ```
 manifest.json
@@ -64,20 +64,20 @@ Pick whichever transfer path fits your platform:
   plugin folder. `main.js` is normally `.gitignore`d — force-add it for this
   scratch branch only, never merge it to `main`.
 - **iOS / iPadOS:** if the vault lives in iCloud Drive, drop the three files
-  into `iCloud Drive/Obsidian/<Vault>/.obsidian/plugins/gitsync/` from a Mac or
+  into `iCloud Drive/Obsidian/<Vault>/.obsidian/plugins/git-vault-sync/` from a Mac or
   the Files app, then open Obsidian. (The `.obsidian` folder is hidden — enable
   "show hidden" in Files, or copy from a Mac.)
 - **Android:** the vault is a normal folder. Copy the three files into
-  `<Vault>/.obsidian/plugins/gitsync/` over USB/MTP, a file manager, or any
+  `<Vault>/.obsidian/plugins/git-vault-sync/` over USB/MTP, a file manager, or any
   cloud share.
 
 Then on the phone: Settings → Community plugins → turn off **Restricted mode** →
-enable **GitSync**. To load a rebuild, replace `main.js` and toggle the plugin
+enable **Git Vault Sync**. To load a rebuild, replace `main.js` and toggle the plugin
 off/on. There is no symlink/watch on mobile — every change is a manual copy.
 
 > The manifest already has `isDesktopOnly: false`, so the plugin is offered on
 > mobile. If it doesn't appear, double-check the folder name is exactly
-> `gitsync` and all three files are present.
+> `git-vault-sync` and all three files are present.
 
 ## 4. Live checklist — what the sandbox can't cover
 

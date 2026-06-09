@@ -206,7 +206,7 @@ export class GitManager {
 		} catch (err) {
 			if (!isUnsupportedIndexError(err)) throw err;
 			console.warn(
-				"GitSync: .git/index in an unsupported format — rebuilding it"
+				"Git Vault Sync: .git/index in an unsupported format — rebuilding it"
 			);
 			await this.recoverIndex();
 			// Retry exactly once. If it still fails with the same index error,
@@ -373,7 +373,7 @@ export class GitManager {
 
 	private author() {
 		const s = this.getSettings();
-		return { name: s.authorName || "GitSync", email: s.authorEmail || "" };
+		return { name: s.authorName || "Git Vault Sync", email: s.authorEmail || "" };
 	}
 
 	/**
