@@ -1,4 +1,4 @@
-import { Menu, Notice, Plugin, setIcon } from "obsidian";
+import { Menu, Notice, Platform, Plugin, setIcon } from "obsidian";
 import {
 	DEFAULT_SETTINGS,
 	GitSyncSettings,
@@ -165,11 +165,20 @@ export default class GitSyncPlugin extends Plugin {
 		this.syncing = true;
 		this.lastSyncError = false;
 		this.setStatus("syncing");
+		// On mobile the status bar is hidden, so a manual sync's progress
+		// (the prog* messages we feed below) would be invisible. Surface it
+		// with a persistent Notice (timeout 0) that we update in the progress
+		// callback and hide in `finally`. Desktop keeps using the status bar
+		// only; auto/startup (silent) syncs stay quiet either way.
+		const progressNotice =
+			!silent && Platform.isMobile
+				? new Notice("GitSync: " + t("statusSyncing"), 0)
+				: null;
 		try {
-			const result = await this.git.sync(
-				(msg) => this.statusTextEl.setText(msg),
-				only
-			);
+			const result = await this.git.sync((msg) => {
+				this.statusTextEl.setText(msg);
+				progressNotice?.setMessage("GitSync: " + msg);
+			}, only);
 			await this.markSynced();
 			const parts: string[] = [];
 			if (result.committed) parts.push(t("resultCommitted"));
@@ -210,6 +219,9 @@ export default class GitSyncPlugin extends Plugin {
 				this.lastSyncError = true;
 			}
 		} finally {
+			// Always tear down the progress Notice — including the conflict
+			// path, so it's gone before the ConflictModal opens.
+			progressNotice?.hide();
 			this.syncing = false;
 			await this.refreshStatus();
 		}
