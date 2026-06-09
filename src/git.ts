@@ -97,6 +97,50 @@ export class GitManager {
 		return run;
 	}
 
+	/**
+	 * Run a mutating git operation, recovering once from a corrupt/unsupported
+	 * `.git/index`.
+	 *
+	 * isomorphic-git only reads dircache v2; a `.git/index` written by system git
+	 * in v3/v4 (index extensions) makes it throw "Unsupported dircache version".
+	 * The index is a rebuildable cache over HEAD + the working tree — deleting it
+	 * is safe in this plugin's model (objects/refs/history untouched), and the
+	 * next statusMatrix/git.add in `fn` repopulates it in v2.
+	 *
+	 * Recovery happens INSIDE the inner method (callers pass an already-unlocked
+	 * `fn`), so re-running never re-enters the public mutex and deadlocks. At most
+	 * one rebuild+retry; a second failure propagates.
+	 */
+	private async withIndexRecovery<T>(fn: () => Promise<T>): Promise<T> {
+		try {
+			return await fn();
+		} catch (err) {
+			if (!isUnsupportedIndexError(err)) throw err;
+			console.warn(
+				"GitSync: .git/index in an unsupported format — rebuilding it"
+			);
+			await this.recoverIndex();
+			// Retry exactly once. If it still fails with the same index error,
+			// map it to a friendly "rebuilt — retry" message; any other failure
+			// propagates as-is (syncInner/initializeInner already mapped theirs).
+			try {
+				return await fn();
+			} catch (retryErr) {
+				if (isUnsupportedIndexError(retryErr)) {
+					throw friendlyError(retryErr);
+				}
+				throw retryErr;
+			}
+		}
+	}
+
+	/** Delete `.git/index` so the next staging op rebuilds it as v2. */
+	private async recoverIndex(): Promise<void> {
+		// dir is "/", so the index lives at "/.git/index"; GitFs.unlink normalizes
+		// it to the vault-relative "·.git/index" and no-ops if already gone.
+		await this.fs.unlink(`${this.dir}.git/index`);
+	}
+
 	private base() {
 		const s = this.getSettings();
 		return {
@@ -200,7 +244,9 @@ export class GitManager {
 		log: ProgressLog = () => {},
 		only?: string[]
 	): Promise<SyncResult> {
-		return this.runExclusive(() => this.syncInner(log, only));
+		return this.runExclusive(() =>
+			this.withIndexRecovery(() => this.syncInner(log, only))
+		);
 	}
 
 	private async syncInner(
@@ -260,8 +306,16 @@ export class GitManager {
 			// 3. Push, retrying once if the remote advanced after our fetch.
 			await this.pushLoop(branch, result, log, skip, snapshot);
 		} catch (err) {
-			caught = friendlyError(err);
-			isConflict = caught instanceof MergeConflict;
+			// An unsupported-index error must escape RAW so withIndexRecovery can
+			// detect it (by message) and rebuild+retry. friendlyError would remap
+			// it to the localized errIndexVersion text, which the detector won't
+			// match — defeating recovery. Everything else is mapped here as usual.
+			if (isUnsupportedIndexError(err)) {
+				caught = err;
+			} else {
+				caught = friendlyError(err);
+				isConflict = caught instanceof MergeConflict;
+			}
 		} finally {
 			// Restore deselected edits the merge may have overwritten — even if
 			// fetch/merge/push threw (e.g. mobile lost the network between
@@ -496,7 +550,9 @@ export class GitManager {
 	 * fresh repo with no local commits) check out the remote branch.
 	 */
 	async initialize(log: ProgressLog = () => {}): Promise<void> {
-		return this.runExclusive(() => this.initializeInner(log));
+		return this.runExclusive(() =>
+			this.withIndexRecovery(() => this.initializeInner(log))
+		);
 	}
 
 	private async initializeInner(log: ProgressLog): Promise<void> {
@@ -558,6 +614,9 @@ export class GitManager {
 				});
 			}
 		} catch (err) {
+			// Let an unsupported-index error escape raw so withIndexRecovery can
+			// detect it by message and rebuild+retry (friendlyError would remap it).
+			if (isUnsupportedIndexError(err)) throw err;
 			throw friendlyError(err);
 		}
 	}
@@ -638,14 +697,16 @@ export class GitManager {
 		restore: Map<string, Uint8Array | null> | null = null
 	): Promise<SyncResult> {
 		return this.runExclusive(() =>
-			this.completeMergeInner(
-				resolutions,
-				oursOid,
-				theirsOid,
-				branch,
-				log,
-				skipPaths,
-				restore
+			this.withIndexRecovery(() =>
+				this.completeMergeInner(
+					resolutions,
+					oursOid,
+					theirsOid,
+					branch,
+					log,
+					skipPaths,
+					restore
+				)
 			)
 		);
 	}
@@ -803,6 +864,12 @@ function friendlyError(err: unknown): Error {
 	if (err instanceof MergeConflict) return err;
 	const code = (err as { code?: string })?.code;
 	const msg = String((err as Error)?.message ?? err);
+	// If an unsupported-index error survived auto-recovery (rebuild + one retry
+	// both failed), tell the user it was rebuilt and to retry, rather than
+	// surfacing the raw "dircache version" internals.
+	if (isUnsupportedIndexError(err)) {
+		return new Error(t("errIndexVersion"));
+	}
 	// Rate limiting also returns 403 — surface its real message, not "bad token".
 	if (/rate limit/i.test(msg)) {
 		return err instanceof Error ? err : new Error(msg);
@@ -842,6 +909,17 @@ async function safeReadBlob(
 	} catch {
 		return { blob: null };
 	}
+}
+
+/**
+ * True when isomorphic-git failed to parse `.git/index` because it was written
+ * in a dircache version it doesn't support (v3/v4 from system git). The message
+ * looks like "Unsupported dircache version: 3"; match it loosely since the
+ * exact wording/code (often InternalError) can vary across versions.
+ */
+function isUnsupportedIndexError(err: unknown): boolean {
+	const msg = String((err as Error)?.message ?? err);
+	return /unsupported dircache version|dircache/i.test(msg);
 }
 
 /** Extract conflicted file paths from an isomorphic-git merge error, if any. */

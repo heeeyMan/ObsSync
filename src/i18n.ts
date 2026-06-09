@@ -132,6 +132,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 		en: "Could not restore your deselected edits: {files}. Check disk space and recover them manually.",
 		ru: "Не удалось восстановить ваши невыбранные правки: {files}. Проверьте свободное место и восстановите их вручную.",
 	},
+	errIndexVersion: {
+		en: "The Git index was in an unsupported format and was rebuilt. Please try syncing again.",
+		ru: "Индекс Git был в неподдерживаемом формате и пересоздан. Повторите синхронизацию.",
+	},
 
 	// --- settings ---
 	syncNow: { en: "Sync now", ru: "Синхронизировать" },
