@@ -21,6 +21,33 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 		ru: "Просмотреть изменения и синхронизировать",
 	},
 	cmdTest: { en: "Test connection to remote", ru: "Проверить соединение с сервером" },
+	cmdApiPullTest: {
+		en: "Test API pull (experimental)",
+		ru: "Тест API-загрузки (эксперимент)",
+	},
+
+	// --- experimental Git Data API dry-run pull ---
+	apiPullBadUrl: {
+		en: "Git Vault Sync: can't parse a GitHub owner/repo from the remote URL.",
+		ru: "Git Vault Sync: не удалось разобрать owner/repo GitHub из URL репозитория.",
+	},
+	apiPullStarting: {
+		en: "Git Vault Sync: starting API dry-run pull…",
+		ru: "Git Vault Sync: запуск тестовой API-загрузки…",
+	},
+	apiPullProgress: { en: "Git Vault Sync: {n}", ru: "Git Vault Sync: {n}" },
+	apiPullDone: {
+		en: "Git Vault Sync: API pull OK — {blobs} blob(s), {mb} MB total, largest blob {maxmb} MB.",
+		ru: "Git Vault Sync: API-загрузка OK — blob'ов: {blobs}, всего {mb} МБ, крупнейший blob {maxmb} МБ.",
+	},
+	apiPullTruncated: {
+		en: " Note: some blobs were truncated.",
+		ru: " Внимание: часть blob'ов была обрезана.",
+	},
+	apiPullFailed: {
+		en: "Git Vault Sync: API pull failed — {msg}",
+		ru: "Git Vault Sync: ошибка API-загрузки — {msg}",
+	},
 
 	// --- status-bar menu ---
 	menuSyncNow: { en: "Sync now", ru: "Синхронизировать сейчас" },
@@ -112,6 +139,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	progDeepening: {
 		en: "Deepening shallow history…",
 		ru: "Углубление истории…",
+	},
+	progDryRun: {
+		en: "Dry-run pull: {n}/{total} blobs…",
+		ru: "Пробное получение: {n}/{total} объектов…",
 	},
 	progInit: { en: "Initializing repository…", ru: "Инициализация репозитория…" },
 	progLinking: { en: "Linking remote…", ru: "Привязка сервера…" },
