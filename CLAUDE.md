@@ -23,11 +23,26 @@ the plugin's `data.json` (plaintext — see *Security*).
 | `git.ts` | `GitManager` — all isomorphic-git logic: `sync`, `fetchAndMerge`, `pushLoop`, `completeMerge`, `initialize`, `listChanges`, staging, excludes, error mapping. |
 | `git-fs.ts` | `GitFs` — adapts Obsidian's `vault.adapter` to the `fs` interface isomorphic-git expects (binary/text, `stat`, path normalization). |
 | `git-http.ts` | `obsidianHttpClient` — HTTP client for isomorphic-git built on Obsidian's `requestUrl` (bypasses CORS). |
-| `conflict-modal.ts` | `ConflictModal` — per-file conflict resolution (local / remote / manual edit), then `completeMerge`. |
-| `review-modal.ts` | `ReviewModal` — commit preview with checkboxes; runs a selective `sync(only)`. |
-| `i18n.ts` | `t(key, vars?)` + `setLanguage(pref)` — EN/RU string table. Language follows the "Language" setting (`auto` → Obsidian's UI language). All user-facing strings go through `t()`. |
+| `github-sync.ts` | **The API sync engine** (default on mobile): `apiSync`/`commitResolutions` over the GitHub **Git Data API** (`requestUrl`). Per-blob pull + push (blobs→tree→commit→ref), SHA-baseline change detection — avoids isomorphic-git's whole-packfile OOM on large repos. Also `getBranchHead`/`getTree`/`getBlob`/`gitBlobSha`/`parseGitHubRepo`. |
+| `github-api.ts` | `fetchGitHubUser`/`fetchGitHubRepos` — GitHub REST for the settings "Authorize" flow (autofills user/author, populates the repo picker). |
+| `conflict-modal.ts` | `ConflictModal` — git-engine per-file conflict resolution (local / remote / manual edit), then `completeMerge`. |
+| `api-conflict-modal.ts` | `ApiConflictModal` — content-based conflict resolution for the API engine (local / remote / manual; binary- and delete-aware); resolutions applied via `commitResolutions`. |
+| `review-modal.ts` | `ReviewModal` — commit preview with checkboxes; runs a selective `sync(only)` (git engine only). |
+| `i18n.ts` | `t(key, vars?)` + `setLanguage(pref)` — EN/RU string table. Language follows the "Language" setting (`auto` → `getLanguage()`). All user-facing strings go through `t()`. |
 
-## Sync flow (`GitManager.sync`)
+## Two sync engines (`main.ts` `effectiveEngine()`)
+
+`sync()` branches on the `syncEngine` setting (`auto` | `git` | `api`); `auto`
+= **API on `Platform.isMobile`, git (isomorphic-git) on desktop**.
+
+- **API engine** (`github-sync.ts` `apiSync`): detect changes vs the persisted
+  `apiBaseline` (per-path git-blob SHAs) on both sides, pull changed remote
+  blobs one at a time, push local changes as one commit (blobs→tree→commit→
+  `updateRef`). Clashes → `ApiConflictModal` → `commitResolutions`. Under the
+  API engine the status bar shows no git change-count, and Review/selective +
+  Initialize are git-only. The plugin's own `data.json` is always excluded
+  (via `setAlwaysExclude` on the git side and the API `excluded` predicate).
+- **Git engine** (`GitManager.sync`):
 
 1. **Stage** changes (`stageAll`) — `statusMatrix` → `git.add`/`git.remove`,
    skipping excluded globs. `sync(only)` restricts staging to selected paths.

@@ -2,10 +2,12 @@ import { requestUrl, DataAdapter } from "obsidian";
 import { t } from "./i18n";
 
 /**
- * Stage 1 of the new sync engine: a read-only "dry-run pull" over the GitHub
- * Git Data API. It walks a branch's tree and streams every blob *one at a time*
- * to validate memory behaviour on a large repo WITHOUT writing anything into
- * the vault (non-destructive).
+ * GitHub Git Data API sync engine. It performs a full bidirectional sync over
+ * the GitHub Git Data API: pull (fetching each blob one at a time), push
+ * (blobs → tree → commit → ref), change detection by diffing current local and
+ * remote blob shas against saved baselines, and conflict resolution
+ * ({@link commitResolutions}). Memory is held to roughly one blob at a time
+ * throughout, so it scales to large repos and is the default engine on mobile.
  *
  * This file is intentionally independent of the isomorphic-git engine
  * (`git.ts`/`git-fs.ts`/`git-http.ts`). Like {@link ./github-api.ts}, all HTTP
@@ -414,7 +416,7 @@ function bytesToHex(bytes: Uint8Array): string {
  * Parse `owner`/`repo` out of an HTTPS GitHub remote URL, e.g.
  * `https://github.com/owner/repo.git` → `{ owner, repo }`. Returns null if the
  * URL isn't a recognizable github.com HTTPS repo URL. (Convenience for the UI;
- * `dryRunPull` itself takes pre-parsed owner/repo.)
+ * `apiSync` itself takes pre-parsed owner/repo.)
  */
 export function parseGitHubRepo(remoteUrl: string): { owner: string; repo: string } | null {
 	const m = remoteUrl
@@ -427,69 +429,8 @@ export function parseGitHubRepo(remoteUrl: string): { owner: string; repo: strin
 	return { owner, repo };
 }
 
-export interface DryRunPullStats {
-	blobs: number;
-	totalBytes: number;
-	maxBlobBytes: number;
-	truncated: boolean;
-}
-
-/**
- * Read-only "dry-run pull": resolve the branch head, fetch its recursive tree,
- * then stream every blob ONE AT A TIME. Nothing is written to the vault.
- *
- * Memory: only one blob is held at a time. Each iteration fetches the blob,
- * reads its length, optionally verifies its git blob sha, then drops the
- * reference (set to undefined) so the bytes are eligible for GC before the next
- * fetch. We accumulate only numbers (count / totalBytes / maxBlobBytes), never
- * the contents, so peak memory ≈ one blob regardless of repo size.
- */
-export async function dryRunPull(opts: {
-	owner: string;
-	repo: string;
-	branch: string;
-	token: string;
-	onProgress?: (msg: string) => void;
-}): Promise<DryRunPullStats> {
-	const { owner, repo, branch, token, onProgress } = opts;
-
-	onProgress?.(t("progFetching"));
-	const { treeSha } = await getBranchHead(owner, repo, branch, token);
-
-	const { entries, truncated } = await getTree(owner, repo, treeSha, token);
-	const total = entries.length;
-
-	let blobs = 0;
-	let totalBytes = 0;
-	let maxBlobBytes = 0;
-
-	for (const entry of entries) {
-		// Fetch one blob; verify its identity against the tree's sha.
-		let content: Uint8Array | undefined = await getBlob(owner, repo, entry.sha, token);
-
-		const computed = await gitBlobSha(content);
-		if (computed !== entry.sha) {
-			throw new Error(t("errNetwork"));
-		}
-
-		const len = content.length;
-		blobs++;
-		totalBytes += len;
-		if (len > maxBlobBytes) maxBlobBytes = len;
-
-		// Drop the reference so the bytes can be collected before the next fetch.
-		content = undefined;
-
-		if (onProgress && (blobs % PROGRESS_EVERY === 0 || blobs === total)) {
-			onProgress(t("progDryRun", { n: blobs, total }));
-		}
-	}
-
-	return { blobs, totalBytes, maxBlobBytes, truncated };
-}
-
 /* -------------------------------------------------------------------------- */
-/* Stage 2: full API sync (pull + push) over the Git Data API.                */
+/* Full API sync (pull + push + conflict detection) over the Git Data API.    */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -619,8 +560,11 @@ function diffShas(
 }
 
 /**
- * Full bidirectional sync over the Git Data API, with NO conflict resolution
- * yet (stage 3). Memory is held to roughly one blob at a time throughout.
+ * Full bidirectional sync over the Git Data API: pull + push of non-conflicting
+ * changes plus conflict detection. Conflicting paths are left untouched and
+ * collected in `result.conflicts` for the UI to resolve (then applied via
+ * {@link commitResolutions}). Memory is held to roughly one blob at a time
+ * throughout.
  *
  * Algorithm:
  *  1. Resolve the remote head and recursive tree → `remoteShas` (blobs only,
@@ -629,9 +573,9 @@ function diffShas(
  *  3. Diff each side against `baseline.shas`:
  *       localChanged/localDeleted, remoteChanged/remoteDeleted.
  *  4. A path is a CONFLICT when it changed on both sides to different results
- *     (different sha, or deleted on one side and changed on the other). On this
- *     stage conflicts are left completely untouched (not pulled, not pushed,
- *     local file unchanged) and collected in `result.conflicts`.
+ *     (different sha, or deleted on one side and changed on the other).
+ *     Conflicts are left completely untouched (not pulled, not pushed, local
+ *     file unchanged) and collected in `result.conflicts`.
  *  5. Pull non-conflict remote changes: fetch each blob (one at a time) and
  *     write it; remove files deleted remotely.
  *  6. Push non-conflict local changes: createBlob per file, one createTree on
@@ -799,7 +743,7 @@ export async function apiSync(opts: {
 }
 
 /**
- * Stage 3: apply user conflict resolutions and commit them.
+ * Apply user conflict resolutions and commit them.
  *
  * Each entry in `resolved` is a path the user resolved: `content != null` is the
  * chosen final bytes (local, remote, or a manual merge); `content == null` means
