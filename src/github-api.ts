@@ -56,9 +56,9 @@ function headers(token: string): Record<string, string> {
  * failures and on network/timeout failures.
  */
 async function apiGet(url: string, token: string): Promise<unknown> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
+	let timer: number | undefined;
 	const timeout = new Promise<never>((_, reject) => {
-		timer = setTimeout(() => {
+		timer = window.setTimeout(() => {
 			reject(new Error(`ERR_TIMEOUT: request timed out after ${REQUEST_TIMEOUT_MS}ms`));
 		}, REQUEST_TIMEOUT_MS);
 	});
@@ -74,11 +74,11 @@ async function apiGet(url: string, token: string): Promise<unknown> {
 			}),
 			timeout,
 		]);
-	} catch (e) {
+	} catch {
 		// Timeout or a thrown transport failure — surface as a network error.
 		throw new Error(t("errNetwork"));
 	} finally {
-		if (timer) clearTimeout(timer);
+		if (timer) window.clearTimeout(timer);
 	}
 
 	// status 0 means the request never reached the server (offline, DNS, etc.).
