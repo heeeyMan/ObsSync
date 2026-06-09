@@ -7,6 +7,7 @@ import {
 import { GitManager, MergeConflict } from "./git";
 import { ConflictModal } from "./conflict-modal";
 import { ReviewModal } from "./review-modal";
+import { dryRunPull, parseGitHubRepo } from "./github-sync";
 import { setLanguage, t } from "./i18n";
 
 export default class GitSyncPlugin extends Plugin {
@@ -80,6 +81,12 @@ export default class GitSyncPlugin extends Plugin {
 			id: "test-connection",
 			name: t("cmdTest"),
 			callback: () => void this.testConnection(),
+		});
+
+		this.addCommand({
+			id: "api-pull-test",
+			name: t("cmdApiPullTest"),
+			callback: () => void this.apiPullTest(),
 		});
 
 		this.addSettingTab(new GitSyncSettingTab(this.app, this));
@@ -371,6 +378,48 @@ export default class GitSyncPlugin extends Plugin {
 		} catch (err) {
 			console.error("Git Vault Sync connection test failed", err);
 			new Notice(t("noticeConnFailed", { msg: (err as Error).message }));
+		}
+	}
+
+	/**
+	 * EXPERIMENTAL diagnostic: stream a repo's tip blob-by-blob through the
+	 * Git Data API client and report counts/sizes WITHOUT writing anything to
+	 * the vault. Meant to be run on a phone against a large repo to confirm the
+	 * new engine pulls one blob at a time without OOMing.
+	 */
+	async apiPullTest(): Promise<void> {
+		if (!this.settings.remoteUrl || !this.settings.token) {
+			new Notice(t("errNoRemote"));
+			return;
+		}
+		const parsed = parseGitHubRepo(this.settings.remoteUrl);
+		if (!parsed) {
+			new Notice(t("apiPullBadUrl"));
+			return;
+		}
+		const branch = this.settings.branch || "main";
+		// Persistent, updatable Notice so progress is visible on mobile (where
+		// the status bar is hidden). Hidden in `finally`.
+		const progressNotice = new Notice(t("apiPullStarting"), 0);
+		try {
+			const result = await dryRunPull({
+				owner: parsed.owner,
+				repo: parsed.repo,
+				branch,
+				token: this.settings.token,
+				onProgress: (msg) =>
+					progressNotice.setMessage(t("apiPullProgress", { n: msg })),
+			});
+			const mb = (result.totalBytes / 1_048_576).toFixed(1);
+			const maxmb = (result.maxBlobBytes / 1_048_576).toFixed(1);
+			let msg = t("apiPullDone", { blobs: result.blobs, mb, maxmb });
+			if (result.truncated) msg += t("apiPullTruncated");
+			new Notice(msg, 10_000);
+		} catch (err) {
+			console.error("Git Vault Sync API pull test failed", err);
+			new Notice(t("apiPullFailed", { msg: (err as Error).message }));
+		} finally {
+			progressNotice.hide();
 		}
 	}
 
