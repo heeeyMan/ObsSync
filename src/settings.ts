@@ -106,7 +106,10 @@ export class GitSyncSettingTab extends PluginSettingTab {
 		let usernameText: TextComponent | null = null;
 		let authBtnSetDisabled: ((d: boolean) => void) | null = null;
 
-		new Setting(containerEl)
+		// Token + inline Authorize button live in the same Setting row: the
+		// text field renders first, the button to its right. The button is
+		// disabled while the field is empty, toggled live on every keystroke.
+		const tokenSetting = new Setting(containerEl)
 			.setName(t("setTokenName"))
 			.setDesc(t("setTokenDesc"))
 			.addText((text) => {
@@ -120,11 +123,12 @@ export class GitSyncSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					});
 				text.inputEl.type = "password";
+				text.inputEl.addClass("gitsync-token-input");
 			});
 
 		// Authorize: pull the GitHub user + repo list, autofill username and the
 		// remote dropdown. Disabled while the token field is empty.
-		new Setting(containerEl).addButton((b) => {
+		tokenSetting.addButton((b) => {
 			b.setButtonText(t("btnAuthorize")).setCta();
 			b.setDisabled(!s.token);
 			authBtnSetDisabled = (d) => b.setDisabled(d);
