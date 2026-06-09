@@ -99,6 +99,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	progFetching: { en: "Fetching from remote…", ru: "Получение с сервера…" },
 	progMerging: { en: "Merging remote changes…", ru: "Слияние изменений…" },
 	progPushing: { en: "Pushing to remote…", ru: "Отправка на сервер…" },
+	progPushingBatch: {
+		en: "Pushing batch {n}/{total}…",
+		ru: "Отправка части {n}/{total}…",
+	},
 	progRemoteMoved: { en: "Remote moved — re-syncing…", ru: "Сервер изменился — повтор…" },
 	progApplying: { en: "Applying resolutions…", ru: "Применение решений…" },
 	progStagingMerge: { en: "Staging merge…", ru: "Подготовка слияния…" },
