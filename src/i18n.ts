@@ -8,10 +8,10 @@ export type LangPref = "auto" | Lang;
 
 const STRINGS: Record<string, Record<Lang, string>> = {
 	// --- ribbon / commands ---
-	ribbonSync: { en: "GitSync: Sync vault", ru: "GitSync: синхронизировать хранилище" },
+	ribbonSync: { en: "Git Vault Sync: Sync vault", ru: "Git Vault Sync: синхронизировать хранилище" },
 	ribbonReview: {
-		en: "GitSync: Review changes & sync",
-		ru: "GitSync: просмотреть изменения и синхронизировать",
+		en: "Git Vault Sync: Review changes & sync",
+		ru: "Git Vault Sync: просмотреть изменения и синхронизировать",
 	},
 	cmdSync: { en: "Sync vault with Git", ru: "Синхронизировать хранилище с Git" },
 	cmdReview: {
@@ -29,23 +29,23 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	statusSyncing: { en: "syncing…", ru: "синхронизация…" },
 	statusError: { en: "error", ru: "ошибка" },
 	statusConflict: { en: "conflict", ru: "конфликт" },
-	tipSyncing: { en: "GitSync: syncing…", ru: "GitSync: синхронизация…" },
+	tipSyncing: { en: "Git Vault Sync: syncing…", ru: "Git Vault Sync: синхронизация…" },
 	tipError: {
-		en: "GitSync: last sync failed — click to retry",
-		ru: "GitSync: последняя синхронизация не удалась — нажмите, чтобы повторить",
+		en: "Git Vault Sync: last sync failed — click to retry",
+		ru: "Git Vault Sync: последняя синхронизация не удалась — нажмите, чтобы повторить",
 	},
 	tipConflict: {
-		en: "GitSync: merge conflict — tap to resolve",
-		ru: "GitSync: конфликт слияния — нажмите, чтобы разрешить",
+		en: "Git Vault Sync: merge conflict — tap to resolve",
+		ru: "Git Vault Sync: конфликт слияния — нажмите, чтобы разрешить",
 	},
 	menuResolve: { en: "Resolve conflict", ru: "Разрешить конфликт" },
 	tipChanges: {
-		en: "GitSync: {n} change(s) to sync · last sync {last} · click for options",
-		ru: "GitSync: изменений к синхронизации: {n} · последняя {last} · нажмите для меню",
+		en: "Git Vault Sync: {n} change(s) to sync · last sync {last} · click for options",
+		ru: "Git Vault Sync: изменений к синхронизации: {n} · последняя {last} · нажмите для меню",
 	},
 	tipClean: {
-		en: "GitSync: up to date · last sync {last} · click for options",
-		ru: "GitSync: актуально · последняя синхронизация {last} · нажмите для меню",
+		en: "Git Vault Sync: up to date · last sync {last} · click for options",
+		ru: "Git Vault Sync: актуально · последняя синхронизация {last} · нажмите для меню",
 	},
 	lastNever: { en: "never", ru: "никогда" },
 	lastJustNow: { en: "just now", ru: "только что" },
@@ -55,14 +55,14 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 
 	// --- sync notices ---
 	noticeInProgress: {
-		en: "GitSync: sync already in progress",
-		ru: "GitSync: синхронизация уже идёт",
+		en: "Git Vault Sync: sync already in progress",
+		ru: "Git Vault Sync: синхронизация уже идёт",
 	},
 	noticeConfigure: {
-		en: "GitSync: configure remote URL and token in settings first",
-		ru: "GitSync: сначала укажите URL репозитория и токен в настройках",
+		en: "Git Vault Sync: configure remote URL and token in settings first",
+		ru: "Git Vault Sync: сначала укажите URL репозитория и токен в настройках",
 	},
-	noticeResult: { en: "GitSync: {parts}", ru: "GitSync: {parts}" },
+	noticeResult: { en: "Git Vault Sync: {parts}", ru: "Git Vault Sync: {parts}" },
 	resultUpToDate: { en: "already up to date", ru: "уже актуально" },
 	resultCommitted: { en: "committed", ru: "закоммичено" },
 	resultPulled: { en: "pulled", ru: "получено" },
@@ -70,26 +70,26 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	resultMerged: { en: "merged", ru: "слито" },
 	resultResolved: { en: "resolved", ru: "разрешено" },
 	noticeConflicts: {
-		en: "GitSync: {n} conflict(s) — resolve them in the dialog.",
-		ru: "GitSync: конфликтов: {n} — разрешите их в диалоге.",
+		en: "Git Vault Sync: {n} conflict(s) — resolve them in the dialog.",
+		ru: "Git Vault Sync: конфликтов: {n} — разрешите их в диалоге.",
 	},
 	noticeAborted: {
-		en: "GitSync: merge aborted, nothing changed",
-		ru: "GitSync: слияние отменено, изменений нет",
+		en: "Git Vault Sync: merge aborted, nothing changed",
+		ru: "Git Vault Sync: слияние отменено, изменений нет",
 	},
-	noticeSyncFailed: { en: "GitSync: sync failed — {msg}", ru: "GitSync: ошибка синхронизации — {msg}" },
-	noticeTesting: { en: "GitSync: testing connection…", ru: "GitSync: проверка соединения…" },
+	noticeSyncFailed: { en: "Git Vault Sync: sync failed — {msg}", ru: "Git Vault Sync: ошибка синхронизации — {msg}" },
+	noticeTesting: { en: "Git Vault Sync: testing connection…", ru: "Git Vault Sync: проверка соединения…" },
 	noticeConnected: {
-		en: "GitSync: connected. Remote branches: {branches}",
-		ru: "GitSync: подключено. Ветки на сервере: {branches}",
+		en: "Git Vault Sync: connected. Remote branches: {branches}",
+		ru: "Git Vault Sync: подключено. Ветки на сервере: {branches}",
 	},
 	noticeConnFailed: {
-		en: "GitSync: connection failed — {msg}",
-		ru: "GitSync: ошибка подключения — {msg}",
+		en: "Git Vault Sync: connection failed — {msg}",
+		ru: "Git Vault Sync: ошибка подключения — {msg}",
 	},
 	noticeResolveFailed: {
-		en: "GitSync: resolve failed — {msg}",
-		ru: "GitSync: ошибка разрешения — {msg}",
+		en: "Git Vault Sync: resolve failed — {msg}",
+		ru: "Git Vault Sync: ошибка разрешения — {msg}",
 	},
 	branchesNone: { en: "(none)", ru: "(нет)" },
 
@@ -175,15 +175,15 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 		en: "Refresh branches from remote",
 		ru: "Обновить ветки с сервера",
 	},
-	branchFetching: { en: "GitSync: fetching branches…", ru: "GitSync: получение веток…" },
+	branchFetching: { en: "Git Vault Sync: fetching branches…", ru: "Git Vault Sync: получение веток…" },
 	branchDone: { en: "Done", ru: "Готово" },
 	branchInvalid: {
 		en: "Invalid branch name. Avoid spaces, ~^:?*[ \\, '..', leading/trailing '/' or '.', and a '.lock' suffix.",
 		ru: "Недопустимое имя ветки. Не используйте пробелы, ~^:?*[ \\, «..», слэш или точку в начале/конце и суффикс «.lock».",
 	},
 	hintRemoteSsh: {
-		en: "This looks like an SSH URL. GitSync needs an HTTPS URL (https://…) with a Personal Access Token.",
-		ru: "Похоже на SSH-адрес. GitSync нужен HTTPS-адрес (https://…) и персональный токен (PAT).",
+		en: "This looks like an SSH URL. Git Vault Sync needs an HTTPS URL (https://…) with a Personal Access Token.",
+		ru: "Похоже на SSH-адрес. Git Vault Sync нужен HTTPS-адрес (https://…) и персональный токен (PAT).",
 	},
 	hintRemoteNotHttps: {
 		en: "This doesn't look like a valid HTTPS URL, e.g. https://github.com/user/vault.git",
@@ -197,8 +197,8 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 		ru: "Авторизованы как {user} — репозиториев: {count}",
 	},
 	authFailed: {
-		en: "GitSync: authorization failed — {msg}",
-		ru: "GitSync: ошибка авторизации — {msg}",
+		en: "Git Vault Sync: authorization failed — {msg}",
+		ru: "Git Vault Sync: ошибка авторизации — {msg}",
 	},
 	remoteSelectName: { en: "Repository", ru: "Репозиторий" },
 	remoteSelectDesc: {
@@ -250,11 +250,11 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	setInitButton: { en: "Initialize", ru: "Инициализировать" },
 	setInitWorking: { en: "Working…", ru: "Выполняется…" },
 	noticeInitNeed: {
-		en: "GitSync: set remote URL and token first",
-		ru: "GitSync: сначала укажите URL и токен",
+		en: "Git Vault Sync: set remote URL and token first",
+		ru: "Git Vault Sync: сначала укажите URL и токен",
 	},
-	noticeInitReady: { en: "GitSync: repository ready", ru: "GitSync: репозиторий готов" },
-	noticeInitFailed: { en: "GitSync: init failed — {msg}", ru: "GitSync: ошибка инициализации — {msg}" },
+	noticeInitReady: { en: "Git Vault Sync: repository ready", ru: "Git Vault Sync: репозиторий готов" },
+	noticeInitFailed: { en: "Git Vault Sync: init failed — {msg}", ru: "Git Vault Sync: ошибка инициализации — {msg}" },
 	setLangName: { en: "Language", ru: "Язык" },
 	setLangDesc: {
 		en: "Interface language. Auto follows Obsidian's language.",

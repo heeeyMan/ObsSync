@@ -1,7 +1,7 @@
 {
-	"name": "gitsync",
-	"version": "0.1.11",
-	"description": "GitSync — one-click Git sync for Obsidian with conflict resolution (EN/RU).",
+	"name": "git-vault-sync",
+	"version": "0.1.12",
+	"description": "Git Vault Sync — one-click Git sync for Obsidian with conflict resolution (EN/RU).",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
