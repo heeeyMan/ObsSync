@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for working on **GitSync**, a one-click Git sync plugin for Obsidian
+Guidance for working on **Git Vault Sync**, a one-click Git sync plugin for Obsidian
 with conflict resolution. Works on desktop **and mobile**.
 
 ## Big picture
@@ -79,7 +79,7 @@ assert on the resulting trees) — this is the fastest way to verify changes to
 `git.ts` without launching Obsidian. The Obsidian-only layers (`GitFs`,
 `requestUrl` HTTP, modals) must be tested live in a vault.
 
-Dev install: symlink the project into a vault's `.obsidian/plugins/gitsync/`.
+Dev install: symlink the project into a vault's `.obsidian/plugins/git-vault-sync/`.
 Reload the plugin (toggle off/on) after each rebuild to load the new `main.js`.
 
 ## Agent team (`.claude/agents/`)

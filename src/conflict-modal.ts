@@ -160,7 +160,7 @@ export class ConflictModal extends Modal {
 			this.onResolved(result);
 			this.close();
 		} catch (err) {
-			console.error("GitSync completeMerge failed", err);
+			console.error("Git Vault Sync completeMerge failed", err);
 			new Notice(t("noticeResolveFailed", { msg: (err as Error).message }));
 			button.disabled = false;
 			button.setText(t("cmResolve"));
@@ -196,7 +196,7 @@ export class ConflictModal extends Modal {
 				this.conflict.snapshot
 			);
 		} catch (err) {
-			console.error("GitSync abortMerge failed", err);
+			console.error("Git Vault Sync abortMerge failed", err);
 		}
 	}
 }

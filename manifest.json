@@ -1,9 +1,9 @@
 {
-	"id": "gitsync",
-	"name": "GitSync",
-	"version": "0.1.11",
+	"id": "git-vault-sync",
+	"name": "Git Vault Sync",
+	"version": "0.1.12",
 	"minAppVersion": "1.4.0",
-	"description": "Sync your vault with a Git repository (GitHub, HTTPS token) in one click, with conflict resolution. English and Russian UI. Works on desktop and mobile.",
+	"description": "One-click Git sync with interactive conflict resolution and selective commits. HTTPS personal-access-token auth, English and Russian UI; runs on desktop and mobile.",
 	"author": "alexandervasin",
 	"isDesktopOnly": false
 }

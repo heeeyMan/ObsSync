@@ -188,7 +188,7 @@ export class GitSyncSettingTab extends PluginSettingTab {
 					);
 					this.display();
 				} catch (err) {
-					console.error("GitSync authorize failed", err);
+					console.error("Git Vault Sync authorize failed", err);
 					new Notice(t("authFailed", { msg: (err as Error).message }));
 					b.setButtonText(t("btnAuthorize"));
 					b.setDisabled(!s.token);
@@ -327,11 +327,11 @@ export class GitSyncSettingTab extends PluginSettingTab {
 						b.setDisabled(true).setButtonText(t("setInitWorking"));
 						try {
 							await this.plugin.git.initialize((msg) =>
-								new Notice(`GitSync: ${msg}`)
+								new Notice(`Git Vault Sync: ${msg}`)
 							);
 							new Notice(t("noticeInitReady"));
 						} catch (err) {
-							console.error("GitSync initialize failed", err);
+							console.error("Git Vault Sync initialize failed", err);
 							new Notice(
 								t("noticeInitFailed", {
 									msg: (err as Error).message,
@@ -550,7 +550,7 @@ export class GitSyncSettingTab extends PluginSettingTab {
 			this.branchesFetched = true;
 			this.display();
 		} catch (err) {
-			console.error("GitSync fetch branches failed", err);
+			console.error("Git Vault Sync fetch branches failed", err);
 			if (!silent)
 				new Notice(t("noticeConnFailed", { msg: (err as Error).message }));
 		}

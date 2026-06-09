@@ -1,11 +1,11 @@
-# GitSync
+# Git Vault Sync
 
 One-click Git sync for [Obsidian](https://obsidian.md), with interactive conflict
 resolution, on **desktop and mobile**. Push and pull your whole vault to a Git
 remote (GitHub via HTTPS token) with a single button — and pick exactly what
 goes into each commit.
 
-GitSync is a pure-JavaScript plugin built on
+Git Vault Sync is a pure-JavaScript plugin built on
 [isomorphic-git](https://isomorphic-git.org), so it needs no system `git` and
 works on Android/iOS as well as desktop.
 
@@ -33,8 +33,8 @@ works on Android/iOS as well as desktop.
 
 ## Installation
 
-GitSync is not yet in the community plugin store. There are two ways to install
-it today.
+Git Vault Sync is not yet in the community plugin store. There are two ways to
+install it today.
 
 ### Via BRAT (recommended — auto-updates)
 
@@ -43,21 +43,21 @@ from a GitHub repo and keeps them updated. Works on desktop and mobile.
 
 1. Install **BRAT** from the community plugin store and enable it.
 2. Run **BRAT: Add a beta plugin for testing** and paste this repo's URL.
-3. BRAT downloads the latest release and enables GitSync.
+3. BRAT downloads the latest release and enables Git Vault Sync.
 
 ### Manual
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from the
    [latest release](../../releases/latest) (or build them — see *Building from
    source*).
-2. Copy the three files into `<your-vault>/.obsidian/plugins/gitsync/`.
+2. Copy the three files into `<your-vault>/.obsidian/plugins/git-vault-sync/`.
    On mobile, copy them into the same folder inside the vault (see
    [TESTING.md](./TESTING.md) for per-platform tips).
-3. In Obsidian: **Settings → Community plugins**, enable **GitSync**.
+3. In Obsidian: **Settings → Community plugins**, enable **Git Vault Sync**.
 
 ## Configuration
 
-Open **Settings → GitSync** and fill in:
+Open **Settings → Git Vault Sync** and fill in:
 
 | Setting | Description |
 | --- | --- |
@@ -68,11 +68,11 @@ Open **Settings → GitSync** and fill in:
 | Author name / email | Written into commits |
 | Commit message | Template; `{{date}}` is replaced with a timestamp |
 
-Run **GitSync: Test connection to remote** from the command palette to verify
-the URL and token.
+Run **Git Vault Sync: Test connection to remote** from the command palette to
+verify the URL and token.
 
 > ⚠️ **Security:** the token is stored in plaintext in
-> `.obsidian/plugins/gitsync/data.json`. If your vault itself is a Git repo,
+> `.obsidian/plugins/git-vault-sync/data.json`. If your vault itself is a Git repo,
 > make sure that file is `.gitignore`d so the token is never committed.
 
 ## Usage
@@ -84,7 +84,7 @@ the URL and token.
 - **Resolve conflicts** — if a merge conflicts, the resolution dialog opens
   automatically. Choose per file: *Use local*, *Use remote*, or *Edit
   manually*, then **Resolve & sync**. **Cancel** aborts the merge cleanly.
-- **Initialize / link a repo** — on a fresh vault, **Settings → GitSync →
+- **Initialize / link a repo** — on a fresh vault, **Settings → Git Vault Sync →
   Initialize** runs `git init`, links the remote, fetches, and checks out the
   remote branch.
 
@@ -99,7 +99,7 @@ npm run build   # type-check + production bundle → main.js
 For development, symlink the project into a test vault so rebuilds are picked up:
 
 ```bash
-ln -s "$(pwd)" /path/to/Vault/.obsidian/plugins/gitsync
+ln -s "$(pwd)" /path/to/Vault/.obsidian/plugins/git-vault-sync
 ```
 
 ## Architecture
@@ -111,14 +111,14 @@ non-obvious gotchas).
 ## Security
 
 - **Your Personal Access Token is stored in plaintext** in this plugin's
-  `.obsidian/plugins/gitsync/data.json`. Obsidian has no secure secret storage
+  `.obsidian/plugins/git-vault-sync/data.json`. Obsidian has no secure secret storage
   available to plugins, so the token sits on disk unencrypted, like other Git
   plugins for Obsidian.
 - The token is sent only to your configured Git remote over HTTPS (as a Basic
   auth header), never to any third party. It is not logged and not written into
   commits.
 - **If your vault itself is tracked by Git**, make sure
-  `.obsidian/plugins/gitsync/data.json` (or the whole plugin folder) is in your
+  `.obsidian/plugins/git-vault-sync/data.json` (or the whole plugin folder) is in your
   vault's `.gitignore`, or your token will be pushed to the remote.
 - Use a **fine-grained token** scoped to the single repo with **Contents: Read
   and write**, so a leak has the smallest possible blast radius.
