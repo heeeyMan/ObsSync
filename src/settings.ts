@@ -1,5 +1,13 @@
-import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import {
+	App,
+	DropdownComponent,
+	Notice,
+	PluginSettingTab,
+	Setting,
+	TextComponent,
+} from "obsidian";
 import type GitSyncPlugin from "./main";
+import { fetchGitHubRepos, fetchGitHubUser, GitHubRepo } from "./github-api";
 import { LangPref, t } from "./i18n";
 
 export interface GitSyncSettings {
@@ -53,6 +61,7 @@ export const DEFAULT_SETTINGS: GitSyncSettings = {
 };
 
 const NEW_BRANCH = "__gitsync_new_branch__";
+const REMOTE_MANUAL = "__gitsync_remote_manual__";
 
 export class GitSyncSettingTab extends PluginSettingTab {
 	plugin: GitSyncPlugin;
@@ -60,6 +69,12 @@ export class GitSyncSettingTab extends PluginSettingTab {
 	private remoteBranches: string[] = [];
 	private branchesFetched = false;
 	private creatingBranch = false;
+	/** Repositories fetched from GitHub after authorization (for the remote
+	 *  dropdown). Empty until the user authorizes. */
+	private repos: GitHubRepo[] = [];
+	/** When true, the remote URL is edited via the manual text field rather than
+	 *  picked from the repo dropdown. Recomputed in display(). */
+	private remoteManual = false;
 
 	constructor(app: App, plugin: GitSyncPlugin) {
 		super(app, plugin);
@@ -87,45 +102,9 @@ export class GitSyncSettingTab extends PluginSettingTab {
 		// --- 1. Authentication / connection ---
 		containerEl.createEl("h3", { text: t("headAuth") });
 
-		const remoteSetting = new Setting(containerEl)
-			.setName(t("setRemoteName"))
-			.setDesc(t("setRemoteDesc"))
-			.addText((text) =>
-				text
-					.setPlaceholder("https://github.com/user/vault.git")
-					.setValue(s.remoteUrl)
-					.onChange(async (value) => {
-						s.remoteUrl = value.trim();
-						// New remote → drop the old branch list and allow re-fetch.
-						this.branchesFetched = false;
-						this.remoteBranches = [];
-						updateRemoteHint();
-						await this.plugin.saveSettings();
-					})
-			);
-		// Light, non-blocking hint for a clearly non-HTTPS / malformed URL. We
-		// still save whatever is typed (the sync path surfaces real errors).
-		const remoteHint = remoteSetting.descEl.createDiv({
-			cls: "gitsync-setting-hint",
-		});
-		const updateRemoteHint = () => {
-			const msg = remoteUrlHint(s.remoteUrl);
-			remoteHint.setText(msg ?? "");
-			remoteHint.toggleClass("gitsync-hidden", !msg);
-		};
-		updateRemoteHint();
-
-		this.renderBranchSetting(containerEl);
-
-		new Setting(containerEl)
-			.setName(t("setUserName"))
-			.setDesc(t("setUserDesc"))
-			.addText((text) =>
-				text.setValue(s.username).onChange(async (value) => {
-					s.username = value.trim();
-					await this.plugin.saveSettings();
-				})
-			);
+		// Token comes first: it gates authorization, which fills in the rest.
+		let usernameText: TextComponent | null = null;
+		let authBtnSetDisabled: ((d: boolean) => void) | null = null;
 
 		new Setting(containerEl)
 			.setName(t("setTokenName"))
@@ -136,9 +115,64 @@ export class GitSyncSettingTab extends PluginSettingTab {
 					.setValue(s.token)
 					.onChange(async (value) => {
 						s.token = value.trim();
+						// Live-toggle the Authorize button as the field changes.
+						authBtnSetDisabled?.(!s.token);
 						await this.plugin.saveSettings();
 					});
 				text.inputEl.type = "password";
+			});
+
+		// Authorize: pull the GitHub user + repo list, autofill username and the
+		// remote dropdown. Disabled while the token field is empty.
+		new Setting(containerEl).addButton((b) => {
+			b.setButtonText(t("btnAuthorize")).setCta();
+			b.setDisabled(!s.token);
+			authBtnSetDisabled = (d) => b.setDisabled(d);
+			b.onClick(async () => {
+				const token = s.token.trim();
+				if (!token) return;
+				b.setDisabled(true).setButtonText(t("authorizing"));
+				try {
+					const user = await fetchGitHubUser(token);
+					s.username = user.login;
+					// Reflect the autofilled username in the live field too.
+					usernameText?.setValue(user.login);
+					this.repos = await fetchGitHubRepos(token);
+					// Keep the manual flag in sync: if the current URL matches a
+					// fetched repo, switch to dropdown mode automatically.
+					this.remoteManual = !this.repos.some(
+						(r) => r.cloneUrl === s.remoteUrl
+					);
+					await this.plugin.saveSettings();
+					new Notice(
+						t("authOk", {
+							user: user.login,
+							count: this.repos.length,
+						})
+					);
+					this.display();
+				} catch (err) {
+					console.error("GitSync authorize failed", err);
+					new Notice(t("authFailed", { msg: (err as Error).message }));
+					b.setButtonText(t("btnAuthorize"));
+					b.setDisabled(!s.token);
+				}
+			});
+		});
+
+		this.renderRemoteSetting(containerEl);
+
+		this.renderBranchSetting(containerEl);
+
+		new Setting(containerEl)
+			.setName(t("setUserName"))
+			.setDesc(t("setUserDesc"))
+			.addText((text) => {
+				usernameText = text;
+				text.setValue(s.username).onChange(async (value) => {
+					s.username = value.trim();
+					await this.plugin.saveSettings();
+				});
 			});
 
 		// --- 2. Automatic sync ---
@@ -306,6 +340,92 @@ export class GitSyncSettingTab extends PluginSettingTab {
 			el = el.parentElement;
 		}
 		return null;
+	}
+
+	/**
+	 * Remote URL chooser. Before authorization (no fetched repos) this is a
+	 * plain manual text field so the setting still works standalone. After
+	 * authorization it's a dropdown of the user's repositories plus an "enter
+	 * manually" option; picking that reveals the manual text field.
+	 */
+	private renderRemoteSetting(containerEl: HTMLElement): void {
+		const s = this.plugin.settings;
+		const hasRepos = this.repos.length > 0;
+
+		// Decide whether to show the manual field. With no repos there's nothing
+		// to pick, so always manual. With repos, manual unless the current URL
+		// matches a known repo (then default to dropdown selection of it).
+		const matchesRepo = this.repos.some((r) => r.cloneUrl === s.remoteUrl);
+		const showManual = hasRepos ? this.remoteManual || !matchesRepo : true;
+
+		// The manual text field is created up front so the dropdown can reveal
+		// it without a full re-render (avoids scroll jump).
+		let manualText: TextComponent | null = null;
+		let manualEl: HTMLElement | null = null;
+		let updateRemoteHint = () => {};
+
+		if (hasRepos) {
+			new Setting(containerEl)
+				.setName(t("remoteSelectName"))
+				.setDesc(t("remoteSelectDesc"))
+				.addDropdown((dd: DropdownComponent) => {
+					for (const r of this.repos) {
+						const label = r.private
+							? `🔒 ${r.fullName}`
+							: r.fullName;
+						dd.addOption(r.cloneUrl, label);
+					}
+					dd.addOption(REMOTE_MANUAL, t("remoteManual"));
+					dd.setValue(showManual ? REMOTE_MANUAL : s.remoteUrl);
+					dd.onChange(async (value) => {
+						if (value === REMOTE_MANUAL) {
+							this.remoteManual = true;
+							manualEl?.toggleClass("gitsync-hidden", false);
+							manualText?.inputEl.focus();
+							return;
+						}
+						this.remoteManual = false;
+						manualEl?.toggleClass("gitsync-hidden", true);
+						s.remoteUrl = value;
+						this.branchesFetched = false;
+						this.remoteBranches = [];
+						await this.plugin.saveSettings();
+					});
+				});
+		}
+
+		const remoteSetting = new Setting(containerEl)
+			.setName(t("setRemoteName"))
+			.setDesc(t("setRemoteDesc"))
+			.addText((text) => {
+				manualText = text;
+				text
+					.setPlaceholder("https://github.com/user/vault.git")
+					.setValue(s.remoteUrl)
+					.onChange(async (value) => {
+						s.remoteUrl = value.trim();
+						// New remote → drop the old branch list and allow re-fetch.
+						this.branchesFetched = false;
+						this.remoteBranches = [];
+						updateRemoteHint();
+						await this.plugin.saveSettings();
+					});
+			});
+		// Light, non-blocking hint for a clearly non-HTTPS / malformed URL. We
+		// still save whatever is typed (the sync path surfaces real errors).
+		const remoteHint = remoteSetting.descEl.createDiv({
+			cls: "gitsync-setting-hint",
+		});
+		updateRemoteHint = () => {
+			const msg = remoteUrlHint(s.remoteUrl);
+			remoteHint.setText(msg ?? "");
+			remoteHint.toggleClass("gitsync-hidden", !msg);
+		};
+		updateRemoteHint();
+
+		manualEl = remoteSetting.settingEl;
+		// Hide the manual field when a repo is selected from the dropdown.
+		manualEl.toggleClass("gitsync-hidden", hasRepos && !showManual);
 	}
 
 	/** Branch chooser: dropdown of known/remote branches + refresh + create-new. */
