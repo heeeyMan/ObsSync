@@ -134,6 +134,11 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	},
 
 	// --- settings ---
+	syncNow: { en: "Sync now", ru: "Синхронизировать" },
+	syncNowDesc: {
+		en: "Stage, commit, pull and push your vault.",
+		ru: "Подготовить, закоммитить, получить и отправить изменения хранилища.",
+	},
 	setRemoteName: { en: "Remote URL", ru: "URL репозитория" },
 	setRemoteDesc: {
 		en: "HTTPS URL of the Git repository, e.g. https://github.com/user/vault.git",
