@@ -126,7 +126,7 @@ export class GitSyncSettingTab extends PluginSettingTab {
 		}
 
 		// --- 1. Authentication / connection ---
-		containerEl.createEl("h3", { text: t("headAuth") });
+		new Setting(containerEl).setName(t("headAuth")).setHeading();
 
 		// Token comes first: it gates authorization, which fills in the rest.
 		let usernameText: TextComponent | null = null;
@@ -157,7 +157,9 @@ export class GitSyncSettingTab extends PluginSettingTab {
 		tokenSetting.addButton((b) => {
 			b.setButtonText(t("btnAuthorize")).setCta();
 			b.setDisabled(!s.token);
-			authBtnSetDisabled = (d) => b.setDisabled(d);
+			authBtnSetDisabled = (d) => {
+				b.setDisabled(d);
+			};
 			b.onClick(async () => {
 				const token = s.token.trim();
 				if (!token) return;
@@ -212,7 +214,7 @@ export class GitSyncSettingTab extends PluginSettingTab {
 			});
 
 		// --- 2. Automatic sync ---
-		containerEl.createEl("h3", { text: t("headAutoSync") });
+		new Setting(containerEl).setName(t("headAutoSync")).setHeading();
 
 		new Setting(containerEl)
 			.setName(t("setStartupName"))
@@ -257,15 +259,15 @@ export class GitSyncSettingTab extends PluginSettingTab {
 						this.plugin.applyAutoSync();
 					});
 				// Re-sync the field to the stored (coerced) value on blur.
-				text.inputEl.addEventListener("blur", () =>
-					text.setValue(String(s.autoSyncInterval))
-				);
+				text.inputEl.addEventListener("blur", () => {
+					text.setValue(String(s.autoSyncInterval));
+				});
 			});
 		intervalEl = intervalSetting.settingEl;
 		intervalEl.toggleClass("gitsync-hidden", !s.autoSyncEnabled);
 
 		// --- 3. Commits ---
-		containerEl.createEl("h3", { text: t("headCommits") });
+		new Setting(containerEl).setName(t("headCommits")).setHeading();
 
 		new Setting(containerEl)
 			.setName(t("setAuthorNameName"))
@@ -296,7 +298,7 @@ export class GitSyncSettingTab extends PluginSettingTab {
 			);
 
 		// --- 4. Repository ---
-		containerEl.createEl("h3", { text: t("headRepo") });
+		new Setting(containerEl).setName(t("headRepo")).setHeading();
 
 		const exclude = new Setting(containerEl)
 			.setName(t("setExcludeName"))
@@ -318,28 +320,37 @@ export class GitSyncSettingTab extends PluginSettingTab {
 			.addButton((b) =>
 				b
 					.setButtonText(t("setInitButton"))
-					.setWarning()
-					.onClick(async () => {
-						if (!s.remoteUrl || !s.token) {
-							new Notice(t("noticeInitNeed"));
-							return;
-						}
-						b.setDisabled(true).setButtonText(t("setInitWorking"));
-						try {
-							await this.plugin.git.initialize((msg) =>
-								new Notice(`Git Vault Sync: ${msg}`)
+					.setDestructive()
+					.onClick(() => {
+						void (async () => {
+							if (!s.remoteUrl || !s.token) {
+								new Notice(t("noticeInitNeed"));
+								return;
+							}
+							b.setDisabled(true).setButtonText(
+								t("setInitWorking")
 							);
-							new Notice(t("noticeInitReady"));
-						} catch (err) {
-							console.error("Git Vault Sync initialize failed", err);
-							new Notice(
-								t("noticeInitFailed", {
-									msg: (err as Error).message,
-								})
-							);
-						} finally {
-							b.setDisabled(false).setButtonText(t("setInitButton"));
-						}
+							try {
+								await this.plugin.git.initialize((msg) =>
+									new Notice(`Git Vault Sync: ${msg}`)
+								);
+								new Notice(t("noticeInitReady"));
+							} catch (err) {
+								console.error(
+									"Git Vault Sync initialize failed",
+									err
+								);
+								new Notice(
+									t("noticeInitFailed", {
+										msg: (err as Error).message,
+									})
+								);
+							} finally {
+								b.setDisabled(false).setButtonText(
+									t("setInitButton")
+								);
+							}
+						})();
 					})
 			);
 
@@ -599,7 +610,7 @@ function isValidBranchName(name: string): boolean {
 	if (name.endsWith(".lock")) return false;
 	if (name.includes("//")) return false;
 	if (name.includes("@{")) return false;
-	// eslint-disable-next-line no-control-regex
+	// eslint-disable-next-line no-control-regex -- intentionally reject control chars (incl. NUL/DEL) that Git refs forbid
 	if (/[\x00-\x20\x7f]/.test(name)) return false;
 	return true;
 }

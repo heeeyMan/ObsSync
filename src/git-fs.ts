@@ -99,8 +99,8 @@ export class GitFs {
 			const ab = data.buffer.slice(
 				data.byteOffset,
 				data.byteOffset + data.byteLength
-			) as ArrayBuffer;
-			await this.adapter.writeBinary(p, ab);
+			);
+			await this.adapter.writeBinary(p, ab as ArrayBuffer);
 		}
 	}
 
