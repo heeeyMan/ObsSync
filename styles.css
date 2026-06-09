@@ -63,8 +63,25 @@
 	display: none;
 }
 
+/* Stack a setting's control full-width below its label (used for the
+   excluded-files editor, which is awkward in the narrow right column). */
+.gitsync-setting-stacked {
+	display: block;
+}
+
+.gitsync-setting-stacked .setting-item-info {
+	margin-bottom: 8px;
+}
+
+.gitsync-setting-stacked .setting-item-control {
+	width: 100%;
+	justify-content: flex-start;
+}
+
 .gitsync-exclude-textarea {
 	width: 100%;
+	min-height: 180px;
+	resize: vertical;
 	font-family: var(--font-monospace);
 	font-size: var(--font-ui-smaller);
 }
