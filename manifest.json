@@ -1,7 +1,7 @@
 {
 	"id": "gitsync",
 	"name": "GitSync",
-	"version": "0.1.6",
+	"version": "0.1.7",
 	"minAppVersion": "1.4.0",
 	"description": "Sync your vault with a Git repository (GitHub, HTTPS token) in one click, with conflict resolution. English and Russian UI. Works on desktop and mobile.",
 	"author": "alexandervasin",
