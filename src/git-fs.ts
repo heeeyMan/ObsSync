@@ -96,11 +96,8 @@ export class GitFs {
 		if (typeof data === "string") {
 			await this.adapter.write(p, data);
 		} else {
-			const ab = data.buffer.slice(
-				data.byteOffset,
-				data.byteOffset + data.byteLength
-			);
-			await this.adapter.writeBinary(p, ab as ArrayBuffer);
+			const ab = new Uint8Array(data).buffer;
+			await this.adapter.writeBinary(p, ab);
 		}
 	}
 

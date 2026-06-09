@@ -240,8 +240,8 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	},
 	setExcludeName: { en: "Excluded files & folders", ru: "Исключённые файлы и папки" },
 	setExcludeDesc: {
-		en: "One pattern per line — files matching these are never committed or counted (e.g. *.tmp, .obsidian/workspace.json). Use * within a folder, ** across folders, and a trailing / for a whole folder.",
-		ru: "По одному шаблону на строку — совпавшие файлы не коммитятся и не считаются (напр. *.tmp, .obsidian/workspace.json). * — внутри папки, ** — через папки, / в конце — вся папка.",
+		en: "One pattern per line — files matching these are never committed or counted (e.g. *.tmp, secrets/). Use * within a folder, ** across folders, and a trailing / for a whole folder.",
+		ru: "По одному шаблону на строку — совпавшие файлы не коммитятся и не считаются (напр. *.tmp, secrets/). * — внутри папки, ** — через папки, / в конце — вся папка.",
 	},
 	headRepo: { en: "Repository", ru: "Репозиторий" },
 	setInitName: { en: "Initialize / link repository", ru: "Инициализировать / привязать репозиторий" },

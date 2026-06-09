@@ -128,6 +128,18 @@ export default class GitSyncPlugin extends Plugin {
 	async loadSettings() {
 		const saved = (await this.loadData()) as Partial<GitSyncSettings> | null;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, saved ?? {});
+		// First run only: prepend the config folder's workspace files to the
+		// excludes. The config folder is not always ".obsidian", so this is
+		// resolved at runtime via vault.configDir. We key off the *absence* of
+		// the saved value so an existing user's choice (including an
+		// intentionally empty list) is never overwritten.
+		if (saved == null || !("excludePaths" in saved)) {
+			const cd = this.app.vault.configDir;
+			const workspaceExcludes = `${cd}/workspace.json\n${cd}/workspace-mobile.json`;
+			this.settings.excludePaths = this.settings.excludePaths
+				? `${workspaceExcludes}\n${this.settings.excludePaths}`
+				: workspaceExcludes;
+		}
 	}
 
 	async saveSettings() {
