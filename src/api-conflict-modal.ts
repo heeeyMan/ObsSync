@@ -40,7 +40,7 @@ interface FileState {
 }
 
 /**
- * Interactive resolution UI for the experimental Git Data API sync. It mirrors
+ * Interactive resolution UI for the Git Data API sync. It mirrors
  * the structure and CSS of {@link ./conflict-modal.ts} (the isomorphic-git
  * path) but operates on READY content rather than a {@link GitManager}: each
  * side's bytes are supplied up front and the modal simply collects the chosen

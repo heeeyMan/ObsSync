@@ -11,20 +11,11 @@ import {
 	apiSync,
 	commitResolutions,
 	ConflictInfo,
-	dryRunPull,
 	getBlob,
 	parseGitHubRepo,
 } from "./github-sync";
 import { ApiConflictFile, ApiConflictModal } from "./api-conflict-modal";
 import { setLanguage, t } from "./i18n";
-
-/** Vault-root markdown log for the experimental API-pull diagnostic. It is
- *  rewritten in full at each stage so the last line survives a mid-run crash. */
-const APITEST_LOG_FILE = "GitVaultSync-apitest.md";
-
-/** Vault-root markdown log for the experimental API SYNC (pull+push). Rewritten
- *  in full at each stage so the last line survives a mid-run crash. */
-const APISYNC_LOG_FILE = "GitVaultSync-apisync.md";
 
 export default class GitSyncPlugin extends Plugin {
 	settings!: GitSyncSettings;
@@ -65,12 +56,6 @@ export default class GitSyncPlugin extends Plugin {
 			this.openReview();
 		});
 
-		// Experimental diagnostic. A ribbon icon is the most reliable trigger on
-		// mobile (no command palette hunting); the command below still exists too.
-		this.addRibbonIcon("flask-conical", t("cmdApiPullTest"), () => {
-			void this.apiPullTest();
-		});
-
 		this.statusBarEl = this.addStatusBarItem();
 		this.statusBarEl.addClass("gitsync-status-bar");
 		this.statusIconEl = this.statusBarEl.createSpan({
@@ -108,12 +93,6 @@ export default class GitSyncPlugin extends Plugin {
 			id: "test-connection",
 			name: t("cmdTest"),
 			callback: () => void this.testConnection(),
-		});
-
-		this.addCommand({
-			id: "api-pull-test",
-			name: t("cmdApiPullTest"),
-			callback: () => void this.apiPullTest(),
 		});
 
 		this.addSettingTab(new GitSyncSettingTab(this.app, this));
@@ -329,9 +308,9 @@ export default class GitSyncPlugin extends Plugin {
 		const branch = this.settings.branch || "main";
 		const token = this.settings.token;
 
-		// excluded predicate (mirrors apiSyncTest): the config dir (usually
-		// .obsidian), the repo's own .git, the conflicts staging folder, our
-		// diagnostic logs, and this plugin's data.json (which holds the PAT).
+		// excluded predicate: the config dir (usually .obsidian), the repo's own
+		// .git, the conflicts staging folder, any leftover diagnostic log notes
+		// from old test runs, and this plugin's data.json (which holds the PAT).
 		const configDir = this.app.vault.configDir;
 		const dataJson = `${this.manifest.dir ?? ""}/data.json`.replace(
 			/^\/+/,
@@ -344,7 +323,10 @@ export default class GitSyncPlugin extends Plugin {
 				return true;
 			if (path === ".git" || path.startsWith(".git/")) return true;
 			if (path.startsWith("_conflicts/")) return true;
-			if (path === APITEST_LOG_FILE || path === APISYNC_LOG_FILE)
+			if (
+				path === "GitVaultSync-apitest.md" ||
+				path === "GitVaultSync-apisync.md"
+			)
 				return true;
 			if (dataJson && path === dataJson) return true;
 			return false;
@@ -401,9 +383,7 @@ export default class GitSyncPlugin extends Plugin {
 				branch,
 				token,
 				result.conflicts,
-				message,
-				// No crash-log file for the regular sync path; swallow logging.
-				async () => {}
+				message
 			);
 		}
 	}
@@ -550,127 +530,6 @@ export default class GitSyncPlugin extends Plugin {
 	}
 
 	/**
-	 * EXPERIMENTAL diagnostic: stream a repo's tip blob-by-blob through the
-	 * Git Data API client and report counts/sizes WITHOUT writing anything to
-	 * the vault. Meant to be run on a phone against a large repo to confirm the
-	 * new engine pulls one blob at a time without OOMing.
-	 *
-	 * On mobile a transient Notice is easy to miss and the app can be killed
-	 * mid-run, so the authoritative record is a markdown log file at the vault
-	 * root (`APITEST_LOG_FILE`). Each stage appends a timestamped line and
-	 * REWRITES the whole file, awaiting the write before the next heavy step —
-	 * so if the app dies mid-pull, the last line on disk shows how far we got
-	 * (e.g. "PROGRESS: 150/372 blobs…").
-	 */
-	async apiPullTest(): Promise<void> {
-		const logPath = APITEST_LOG_FILE;
-		const lines: string[] = [];
-		const stamp = () => new Date().toISOString();
-		// Rewrite the whole file from the accumulated lines. Awaited by callers
-		// before any further heavy work so the stage is flushed to disk first.
-		const log = async (line: string) => {
-			lines.push(`- ${stamp()}  ${line}`);
-			try {
-				await this.app.vault.adapter.write(
-					logPath,
-					`# Git Vault Sync — API pull test\n\n${lines.join("\n")}\n`
-				);
-			} catch (e) {
-				// Never let a logging failure mask the real diagnostic.
-				console.error("Git Vault Sync apiPullTest log write failed", e);
-			}
-		};
-
-		// Immediate, unmissable proof the command fired — Notice + on-disk
-		// STARTED line — BEFORE any validation or network call.
-		new Notice(t("apiPullStarting"), 0);
-		await log("STARTED");
-
-		let progressNotice: Notice | null = null;
-		try {
-			if (!this.settings.remoteUrl || !this.settings.token) {
-				await log("ERROR: remote URL or token not configured");
-				new Notice(t("errNoRemote"));
-				return;
-			}
-			const parsed = parseGitHubRepo(this.settings.remoteUrl);
-			if (!parsed) {
-				await log("ERROR: cannot parse GitHub owner/repo from remote URL");
-				new Notice(t("apiPullBadUrl"));
-				return;
-			}
-			const branch = this.settings.branch || "main";
-			// Params WITHOUT the token.
-			await log(
-				`PARAMS: owner=${parsed.owner}, repo=${parsed.repo}, branch=${branch}`
-			);
-
-			// Persistent, updatable Notice so progress is visible on mobile
-			// (where the status bar is hidden). Hidden in `finally`.
-			progressNotice = new Notice(t("apiPullStarting"), 0);
-
-			// The engine's first onProgress is the pre-tree "fetching" message;
-			// the first per-blob message (the first that carries an x/N count) is
-			// our "tree received" marker. Subsequent ones are throttled to ~every
-			// 50th to keep the log a stage trail rather than a flood. The engine
-			// already controls its own emit cadence; we additionally throttle the
-			// disk writes here.
-			let fetchLogged = false;
-			let treeLogged = false;
-			let blobCalls = 0;
-			const result = await dryRunPull({
-				owner: parsed.owner,
-				repo: parsed.repo,
-				branch,
-				token: this.settings.token,
-				onProgress: (msg) => {
-					progressNotice?.setMessage(t("apiPullProgress", { n: msg }));
-					// Fire-and-forget disk writes from inside the tight loop:
-					// awaiting here would serialize every blob. The throttle keeps
-					// them rare; the final DONE/ERROR lines are awaited.
-					const isBlobMsg = msg.includes("/");
-					if (!fetchLogged && !isBlobMsg) {
-						fetchLogged = true;
-						void log(`FETCH: ${msg}`);
-					} else if (isBlobMsg) {
-						blobCalls++;
-						if (!treeLogged) {
-							treeLogged = true;
-							void log(`TREE: ${msg} (tree received)`);
-						} else if (blobCalls % 50 === 0) {
-							void log(`PROGRESS: ${msg}`);
-						}
-					}
-				},
-			});
-
-			const mb = (result.totalBytes / 1_048_576).toFixed(1);
-			const maxmb = (result.maxBlobBytes / 1_048_576).toFixed(1);
-			await log(
-				`DONE: blobs=${result.blobs}, totalMB=${mb}, maxBlobMB=${maxmb}` +
-					(result.truncated ? ", truncated=true" : "")
-			);
-
-			let msg = t("apiPullDone", {
-				blobs: result.blobs,
-				mb,
-				maxmb,
-			});
-			if (result.truncated) msg += t("apiPullTruncated");
-			new Notice(msg, 10_000);
-			new Notice(t("apiPullLogSaved", { file: logPath }), 10_000);
-		} catch (err) {
-			console.error("Git Vault Sync API pull test failed", err);
-			const e = err as Error;
-			await log(`ERROR: ${e?.message ?? String(err)}`);
-			if (e?.stack) await log(`STACK: ${e.stack}`);
-			new Notice(t("apiPullFailed", { msg: e?.message ?? String(err) }));
-		} finally {
-			progressNotice?.hide();
-		}
-	}
-
-	/**
 	 * Interactive resolution for the conflicts the API sync left untouched. For each {@link ConflictInfo} we lazily materialize both sides'
 	 * bytes — the remote blob via {@link getBlob} (skipped when remote-deleted),
 	 * the local file via the adapter (skipped when locally deleted) — then open
@@ -679,8 +538,8 @@ export default class GitSyncPlugin extends Plugin {
 	 * vault, uploads, commits on the live tip and pushes. The returned baseline is
 	 * persisted so those paths are no longer seen as diverged next sync.
 	 *
-	 * Errors are caught, logged to the crash-surviving log, and surfaced as a
-	 * Notice — they never propagate to break the surrounding sync reporting.
+	 * Errors are caught and surfaced as a Notice — they never propagate to break
+	 * the surrounding sync reporting.
 	 */
 	private async resolveApiConflicts(
 		owner: string,
@@ -688,8 +547,7 @@ export default class GitSyncPlugin extends Plugin {
 		branch: string,
 		token: string,
 		conflicts: ConflictInfo[],
-		message: string,
-		log: (line: string) => Promise<void>
+		message: string
 	): Promise<void> {
 		const adapter = this.app.vault.adapter;
 
@@ -710,7 +568,6 @@ export default class GitSyncPlugin extends Plugin {
 		} catch (err) {
 			const e = err as Error;
 			console.error("Git Vault Sync: loading conflict content failed", err);
-			await log(`RESOLVE-ERROR: ${e?.message ?? String(err)}`);
 			new Notice(
 				t("apiSyncResolveFailed", { msg: e?.message ?? String(err) })
 			);
@@ -735,14 +592,12 @@ export default class GitSyncPlugin extends Plugin {
 		);
 
 		if (!resolved) {
-			await log("RESOLVE: cancelled");
 			new Notice(t("apiSyncResolveCancelled"));
 			return;
 		}
 
 		const resolveNotice = new Notice(t("apiSyncResolving"), 0);
 		try {
-			await log(`RESOLVING: ${resolved.size} file(s)`);
 			const res = await commitResolutions({
 				owner,
 				repo,
@@ -763,14 +618,10 @@ export default class GitSyncPlugin extends Plugin {
 			this.settings.apiBaseline = res.newBaseline;
 			await this.saveSettings();
 
-			await log(
-				`RESOLVED: ${resolved.size}, committed=${res.committed}, baselineSaved=true`
-			);
 			new Notice(t("apiSyncResolved", { n: resolved.size }), 10_000);
 		} catch (err) {
 			const e = err as Error;
 			console.error("Git Vault Sync: commitResolutions failed", err);
-			await log(`RESOLVE-ERROR: ${e?.message ?? String(err)}`);
 			new Notice(
 				t("apiSyncResolveFailed", { msg: e?.message ?? String(err) })
 			);
