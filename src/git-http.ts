@@ -54,7 +54,9 @@ export const obsidianHttpClient: HttpClient = {
 			headers: res.headers,
 			// isomorphic-git accepts a plain array of chunks here even though
 			// the published type only names AsyncIterableIterator.
-			body: [new Uint8Array(res.arrayBuffer)] as unknown as GitHttpResponse["body"],
+			body: [
+				new Uint8Array(res.arrayBuffer ?? new ArrayBuffer(0)),
+			] as unknown as GitHttpResponse["body"],
 		};
 	},
 };

@@ -99,9 +99,11 @@ export class ReviewModal extends Modal {
 		});
 		row.createSpan({ cls: "gitsync-review-path", text: entry.path });
 		row.addEventListener("click", (evt) => {
-			if (evt.target === checkbox) return;
+			if (evt.target === checkbox) return; // checkbox handles its own click
 			checkbox.checked = !checkbox.checked;
-			checkbox.dispatchEvent(new Event("change"));
+			if (checkbox.checked) this.selected.add(entry.path);
+			else this.selected.delete(entry.path);
+			this.updateSyncButton();
 		});
 	}
 

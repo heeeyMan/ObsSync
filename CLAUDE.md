@@ -82,6 +82,20 @@ assert on the resulting trees) — this is the fastest way to verify changes to
 Dev install: symlink the project into a vault's `.obsidian/plugins/gitsync/`.
 Reload the plugin (toggle off/on) after each rebuild to load the new `main.js`.
 
+## Agent team (`.claude/agents/`)
+
+This repo defines a team of subagents. Route work through them:
+
+- **team-lead** — orchestrator/planner; decomposes a task, delegates to the
+  specialists, and gates "done" on a clean build + review. Start here for
+  anything spanning more than one area.
+- **git-core** — isomorphic-git engine (`git.ts`, `git-fs.ts`, `git-http.ts`).
+- **obsidian-ui** — settings/modals/status bar/CSS (`main.ts`, `settings.ts`,
+  `conflict-modal.ts`, `review-modal.ts`, `styles.css`).
+- **i18n** — EN/RU string table (`i18n.ts`) and `t()` coverage.
+- **reviewer-tester** — build, Node-sandbox validation of git semantics,
+  security/correctness review. The quality gate before anything ships.
+
 ## Security
 
 `data.json` holds the PAT in plaintext and is `.gitignore`d in this repo. If a

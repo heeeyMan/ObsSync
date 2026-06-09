@@ -560,14 +560,22 @@ export class GitManager {
 		return { committed: true, pulled: true, pushed: true, conflicts: [] };
 	}
 
-	/** Discard an in-progress conflicted merge, restoring the branch tip. */
-	async abortMerge(branch: string): Promise<void> {
+	/**
+	 * Discard an in-progress conflicted merge, restoring the branch tip. If a
+	 * snapshot of deselected files is given, re-apply it afterwards — the merge
+	 * (and this checkout) overwrote those uncommitted edits in the working tree.
+	 */
+	async abortMerge(
+		branch: string,
+		snapshot: Map<string, Uint8Array | null> | null = null
+	): Promise<void> {
 		await git.checkout({
 			fs: this.fs,
 			dir: this.dir,
 			ref: branch,
 			force: true,
 		});
+		if (snapshot) await this.restoreSnapshot(snapshot);
 	}
 
 	private commitMessage(): string {
@@ -618,9 +626,11 @@ function globToRegExp(pattern: string): RegExp {
 		}
 	}
 
+	// Always allow a trailing-path match so a bare name (e.g. "node_modules" or
+	// ".obsidian") excludes the folder *and everything under it*, matching
+	// gitignore semantics — not just an entry literally named that.
 	const prefix = anchored ? "^" : "(^|/)";
-	if (dirOnly) return new RegExp(`${prefix}${body}(/|$)`);
-	return new RegExp(`${prefix}${body}$`);
+	return new RegExp(`${prefix}${body}(/|$)`);
 }
 
 /** Internal marker for a non-fast-forward push rejection. */
@@ -636,8 +646,12 @@ function friendlyError(err: unknown): Error {
 	if (err instanceof MergeConflict) return err;
 	const code = (err as { code?: string })?.code;
 	const msg = String((err as Error)?.message ?? err);
+	// Rate limiting also returns 403 — surface its real message, not "bad token".
+	if (/rate limit/i.test(msg)) {
+		return err instanceof Error ? err : new Error(msg);
+	}
 	if (
-		/401|403|Unauthorized|Forbidden|authentication|invalid.*token/i.test(
+		/\b401\b|\b403\b|Unauthorized|Bad credentials|authentication|invalid.*token/i.test(
 			msg
 		) ||
 		(code === "HttpError" && /\b40[13]\b/.test(msg))

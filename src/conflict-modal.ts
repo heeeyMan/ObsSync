@@ -25,6 +25,8 @@ interface FileState {
 export class ConflictModal extends Modal {
 	private states: FileState[] = [];
 	private finished = false;
+	/** True while completeMerge is running, to block a racing abort on close. */
+	private resolving = false;
 
 	constructor(
 		app: App,
@@ -42,19 +44,24 @@ export class ConflictModal extends Modal {
 		contentEl.createEl("p", { text: t("cmIntro") });
 
 		const loading = contentEl.createEl("p", { text: t("cmLoading") });
-		for (const filepath of this.conflict.files) {
-			const [ours, theirs, working] = await Promise.all([
-				this.git.readVersion(this.conflict.oursOid, filepath),
-				this.git.readVersion(this.conflict.theirsOid, filepath),
-				this.git.readWorkingFile(filepath).catch(() => ""),
-			]);
-			this.states.push({
-				filepath,
-				ours,
-				theirs,
-				choice: "manual",
-				manual: working,
-			});
+		try {
+			for (const filepath of this.conflict.files) {
+				const [ours, theirs, working] = await Promise.all([
+					this.git.readVersion(this.conflict.oursOid, filepath),
+					this.git.readVersion(this.conflict.theirsOid, filepath),
+					this.git.readWorkingFile(filepath).catch(() => ""),
+				]);
+				this.states.push({
+					filepath,
+					ours,
+					theirs,
+					choice: "manual",
+					manual: working,
+				});
+			}
+		} catch (err) {
+			loading.setText(t("cmFailed", { msg: (err as Error).message }));
+			return;
 		}
 		loading.remove();
 
@@ -118,6 +125,7 @@ export class ConflictModal extends Modal {
 	private async resolve(button: HTMLButtonElement) {
 		button.disabled = true;
 		button.setText(t("cmSyncing"));
+		this.resolving = true;
 		try {
 			const resolutions = new Map<string, Resolution>();
 			for (const s of this.states) {
@@ -147,28 +155,38 @@ export class ConflictModal extends Modal {
 			new Notice(t("noticeResolveFailed", { msg: (err as Error).message }));
 			button.disabled = false;
 			button.setText(t("cmResolve"));
+		} finally {
+			this.resolving = false;
 		}
 	}
 
 	private async cancel() {
 		this.finished = true;
-		try {
-			await this.git.abortMerge(this.conflict.branch);
-		} catch (err) {
-			console.error("GitSync abortMerge failed", err);
-		}
+		await this.abortAndRestore();
 		this.onAborted();
 		this.close();
 	}
 
 	onClose() {
 		this.contentEl.empty();
-		// If dismissed without resolving, abort so the vault isn't left half-merged.
-		if (!this.finished) {
-			void this.git.abortMerge(this.conflict.branch).then(
-				() => this.onAborted(),
-				(err) => console.error("GitSync abortMerge failed", err)
+		// Dismissed (Esc/click-outside) without resolving and not mid-resolve:
+		// abort so the vault isn't left half-merged. Restore deselected edits
+		// the merge overwrote.
+		if (!this.finished && !this.resolving) {
+			this.finished = true;
+			void this.abortAndRestore().then(() => this.onAborted());
+		}
+	}
+
+	/** Abort the merge and restore any deselected-file snapshot. */
+	private async abortAndRestore(): Promise<void> {
+		try {
+			await this.git.abortMerge(
+				this.conflict.branch,
+				this.conflict.snapshot
 			);
+		} catch (err) {
+			console.error("GitSync abortMerge failed", err);
 		}
 	}
 }
