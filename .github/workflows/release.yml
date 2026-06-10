@@ -8,6 +8,16 @@ on:
   push:
     tags:
       - "*.*.*"
+  # Manual runs are a build/compatibility smoke test (e.g. to confirm the
+  # actions run on Node 24). The attest + release steps below are guarded to
+  # tag pushes, so a manual run never publishes a Release.
+  workflow_dispatch:
+
+# Run the bundled JS actions on Node.js 24. GitHub forces this from 2026-06-16
+# and removes Node 20 on 2026-09-16; opting in early surfaces any incompatibility
+# now instead of breaking a future release.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
   # contents: write   -> create the release and upload assets
@@ -37,6 +47,7 @@ jobs:
         run: npm run build
 
       - name: Attest build provenance
+        if: github.ref_type == 'tag'
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
@@ -44,6 +55,7 @@ jobs:
             styles.css
 
       - name: Create GitHub Release
+        if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
