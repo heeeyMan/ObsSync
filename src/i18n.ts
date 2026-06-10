@@ -191,12 +191,37 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	},
 	branchNew: { en: "➕ Create new branch…", ru: "➕ Создать новую ветку…" },
 	branchNewName: { en: "New branch name", ru: "Имя новой ветки" },
+	branchBaseLabel: {
+		en: "Created on the remote from base branch “{branch}”.",
+		ru: "Будет создана на сервере от базовой ветки «{branch}».",
+	},
 	branchRefresh: {
 		en: "Refresh branches from remote",
 		ru: "Обновить ветки с сервера",
 	},
 	branchFetching: { en: "Git Vault Sync: fetching branches…", ru: "Git Vault Sync: получение веток…" },
 	branchDone: { en: "Done", ru: "Готово" },
+	branchCreate: { en: "Create branch", ru: "Создать ветку" },
+	branchCreating: {
+		en: "Git Vault Sync: creating branch “{branch}” on the remote…",
+		ru: "Git Vault Sync: создание ветки «{branch}» на сервере…",
+	},
+	branchCreated: {
+		en: "Git Vault Sync: branch “{branch}” created on the remote.",
+		ru: "Git Vault Sync: ветка «{branch}» создана на сервере.",
+	},
+	branchCreateFailed: {
+		en: "Git Vault Sync: couldn't create branch “{branch}” — {msg}",
+		ru: "Git Vault Sync: не удалось создать ветку «{branch}» — {msg}",
+	},
+	branchCreateNeedsGitHub: {
+		en: "Creating a branch on the remote requires a GitHub HTTPS repository URL.",
+		ru: "Создание ветки на сервере требует HTTPS-адрес репозитория GitHub.",
+	},
+	branchBaseEmpty: {
+		en: "Can't create a branch: the base branch “{branch}” doesn't exist on the remote yet (the repository may be empty). Push something first.",
+		ru: "Не удалось создать ветку: базовой ветки «{branch}» ещё нет на сервере (репозиторий может быть пустым). Сначала отправьте что-нибудь.",
+	},
 	branchInvalid: {
 		en: "Invalid branch name. Avoid spaces, ~^:?*[ \\, '..', leading/trailing '/' or '.', and a '.lock' suffix.",
 		ru: "Недопустимое имя ветки. Не используйте пробелы, ~^:?*[ \\, «..», слэш или точку в начале/конце и суффикс «.lock».",
