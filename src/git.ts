@@ -404,17 +404,13 @@ export class GitManager {
 	 */
 	private excludeMatcher(): (path: string) => boolean {
 		const always = this.alwaysExclude;
-		const settingPatterns = (this.getSettings().excludePaths || "")
-			.split("\n")
-			.map((s) => s.trim())
-			.filter(Boolean);
-		const patterns = [...settingPatterns, ...this.gitignorePatterns];
-		const regexes = patterns.map(globToRegExp);
+		const matchesUser = buildUserExcludeMatcher(
+			this.getSettings().excludePaths,
+			this.gitignorePatterns
+		);
 		const matchesAlways = (path: string): boolean =>
 			always.some((p) => path === p || path.startsWith(`${p}/`));
-		if (regexes.length === 0) return matchesAlways;
-		return (path) =>
-			matchesAlways(path) || regexes.some((re) => re.test(path));
+		return (path) => matchesAlways(path) || matchesUser(path);
 	}
 
 	private author() {
@@ -1235,7 +1231,35 @@ export class GitManager {
  * glob→RegExp converter (a trailing `/` keeps folder semantics, a `/`-less name
  * matches at any depth, `*`/`**` behave as in `excludePaths`).
  */
-function parseGitignore(text: string): string[] {
+/**
+ * Build a predicate matching paths excluded by the user's CONFIGURABLE sources —
+ * the `excludePaths` setting (newline-separated globs) plus already-parsed root
+ * `.gitignore` patterns. Pure (no `this`) so BOTH engines share one semantics:
+ * the git engine wires it into {@link GitManager.excludeMatcher} (on top of
+ * `alwaysExclude`), and the API engine ({@link module:main}) ORs it with its
+ * hardcoded exclusions. `gitignorePatterns` are the output of
+ * {@link parseGitignore}; pass `[]` when there is no `.gitignore`.
+ *
+ * Matching uses the same {@link globToRegExp} converter as everywhere else, so a
+ * pattern excluded on the desktop git engine excludes the identical paths on the
+ * mobile API engine. Returns a predicate that is `false` for every path when no
+ * patterns are configured.
+ */
+export function buildUserExcludeMatcher(
+	excludePaths: string | undefined,
+	gitignorePatterns: string[]
+): (path: string) => boolean {
+	const settingPatterns = (excludePaths || "")
+		.split("\n")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	const patterns = [...settingPatterns, ...gitignorePatterns];
+	const regexes = patterns.map(globToRegExp);
+	if (regexes.length === 0) return () => false;
+	return (path) => regexes.some((re) => re.test(path));
+}
+
+export function parseGitignore(text: string): string[] {
 	const out: string[] = [];
 	for (const line of text.split("\n")) {
 		const trimmed = line.trim();
@@ -1287,7 +1311,7 @@ export function chunkChanges<T extends { size: number }>(
  * matches a folder and everything under it, and a pattern without `/` matches
  * by basename at any depth.
  */
-function globToRegExp(pattern: string): RegExp {
+export function globToRegExp(pattern: string): RegExp {
 	let pat = pattern;
 	const dirOnly = pat.endsWith("/");
 	if (dirOnly) pat = pat.slice(0, -1);

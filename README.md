@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Git Vault Sync" width="128" height="128">
+</p>
+
 # Git Vault Sync
 
 One-click Git sync for [Obsidian](https://obsidian.md), with interactive conflict
@@ -21,6 +25,21 @@ the right one per platform:
 
 Both push and pull to the same GitHub remote, so all your devices stay in sync.
 
+### Engine asymmetry: the config folder
+
+Both engines honor your **Excluded paths** and the repo's `.gitignore` with the
+same glob semantics, so a path you exclude on the desktop is also excluded when
+syncing from mobile.
+
+One deliberate difference: the **GitHub API engine always skips the whole config
+folder** (`.obsidian/`), regardless of your exclude patterns. The config folder
+is hundreds of small, frequently-changing files; pulling them one blob at a time
+hits GitHub rate limits and mobile memory, and most desktop plugins there are
+useless on a phone anyway. So the API engine syncs your **notes**, not your
+Obsidian settings. The git engine (desktop) can sync `.obsidian/` if you don't
+exclude it. Either way, the plugin's own `data.json` (which holds your token) is
+always excluded by both engines.
+
 ## Features
 
 - **One-click sync** — stage all changes → commit → fetch → merge → push.
@@ -34,7 +53,9 @@ Both push and pull to the same GitHub remote, so all your devices stay in sync.
   syncing, ✓ when clean, and the last-sync time on hover. Click it for a menu.
 - **Auto-sync** — optional sync on startup and/or on a timer.
 - **Excluded paths** — glob patterns (e.g. `.obsidian/workspace.json`) that are
-  never committed or counted.
+  never committed or counted. Patterns and the repo's `.gitignore` apply on both
+  engines; note the API engine additionally always skips `.obsidian/` (see
+  [Engine asymmetry](#engine-asymmetry-the-config-folder)).
 - **Saved credentials** — remote, branch, and token are stored once.
 
 ## Requirements
