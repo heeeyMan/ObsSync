@@ -345,6 +345,14 @@ export class GitSyncSettingTab extends PluginSettingTab {
 			});
 		// Stack the textarea full-width below its label.
 		exclude.settingEl.addClass("gitsync-setting-stacked");
+		// Document the engine asymmetry: excludePaths/.gitignore now apply on both
+		// engines, but the API engine (mobile) always skips the whole config dir.
+		const excludeHint = containerEl.createEl("div", {
+			text: t("setExcludeHint"),
+			cls: "gitsync-setting-hint",
+		});
+		// Sit the hint directly under the exclude textarea.
+		exclude.settingEl.insertAdjacentElement("afterend", excludeHint);
 
 		const initSetting = new Setting(containerEl)
 			.setName(t("setInitName"))

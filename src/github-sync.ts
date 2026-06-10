@@ -316,6 +316,13 @@ export interface TreeEntryInput {
  * blob: `{ path, mode: "100644", type: "blob", sha }` to add/modify, or
  * `{ path, mode: "100644", type: "blob", sha: null }` to delete the path from
  * the base tree. Returns the new tree sha.
+ *
+ * LIMITATION (P2-1): entries default to mode `100644` (regular file). The API
+ * engine never reads the on-disk executable bit (the Obsidian fs adapter has no
+ * portable mode), so syncing an existing `100755` blob through this engine
+ * rewrites it to `100644`, dropping the executable bit. This is intentional and
+ * harmless for a notes vault (no scripts are run from it); reading real file
+ * modes is deliberately not done to keep the per-blob walk cheap on mobile.
  */
 export async function createTree(
 	owner: string,
@@ -537,7 +544,7 @@ async function scanLocalShas(
 		bytes = undefined;
 		i++;
 		if (onProgress && i % PROGRESS_EVERY === 0) {
-			onProgress(t("progStaging"));
+			onProgress(t("progScanning"));
 		}
 	}
 	return shas;
@@ -605,7 +612,11 @@ export async function apiSync(opts: {
 		branch,
 		token,
 	);
-	const { entries } = await getTree(owner, repo, remoteTree, token);
+	const { entries, truncated } = await getTree(owner, repo, remoteTree, token);
+	// GitHub truncates the recursive tree past its response limit. A partial list
+	// makes missing paths look "deleted remotely" and would delete them locally —
+	// abort before any diff/delete rather than silently lose data.
+	if (truncated) throw new Error(t("errTreeTruncated"));
 	const remoteShas: Record<string, string> = {};
 	for (const e of entries) {
 		if (!e.path || excluded(e.path)) continue;
