@@ -394,6 +394,94 @@ export async function updateRef(
 }
 
 /**
+ * POST /git/refs — create a new branch ref `refs/heads/{newBranch}` on the
+ * remote, pointing at the tip of `baseBranch`.
+ *
+ * 1. Resolve the base branch tip via {@link getBranchHead} → its commit sha. A
+ *    missing base branch (404) means the repo is empty or the base doesn't
+ *    exist; surfaced as a clear `branchBaseEmpty` error rather than errNotFound.
+ * 2. POST `{ ref: "refs/heads/<newBranch>", sha: <baseSha> }`.
+ *
+ * GitHub returns 422 "Reference already exists" when the branch is already
+ * there; that's treated as SUCCESS (idempotent — the branch exists, which is
+ * the caller's goal). Auth/network failures map to the usual localized errors.
+ *
+ * This is engine-independent: it only creates the remote ref. A subsequent sync
+ * (Git or API engine) picks the branch up normally.
+ */
+export async function createBranch(
+	owner: string,
+	repo: string,
+	newBranch: string,
+	baseBranch: string,
+	token: string,
+): Promise<void> {
+	// 1. Resolve the base branch tip. getBranchHead throws errNotFound (404) when
+	//    the base branch is missing — reframe that as a clear, base-specific error.
+	let baseSha: string;
+	try {
+		baseSha = (await getBranchHead(owner, repo, baseBranch, token)).commitSha;
+	} catch (err) {
+		if ((err as Error).message === t("errNotFound")) {
+			throw new Error(t("branchBaseEmpty", { branch: baseBranch }));
+		}
+		throw err;
+	}
+
+	// 2. POST the new ref. Do the request inline (not via apiWrite) so a 422
+	//    "Reference already exists" can be distinguished from other failures and
+	//    treated as success.
+	const url = `${API_BASE}/repos/${owner}/${repo}/git/refs`;
+	const body = { ref: `refs/heads/${newBranch}`, sha: baseSha };
+
+	let timer: number | undefined;
+	const timeout = new Promise<never>((_, reject) => {
+		timer = window.setTimeout(() => {
+			reject(new Error(`ERR_TIMEOUT: request timed out after ${REQUEST_TIMEOUT_MS}ms`));
+		}, REQUEST_TIMEOUT_MS);
+	});
+
+	let res;
+	try {
+		res = await Promise.race([
+			requestUrl({
+				url,
+				method: "POST",
+				headers: { ...headers(token), "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+				throw: false,
+			}),
+			timeout,
+		]);
+	} catch {
+		throw new Error(t("errNetwork"));
+	} finally {
+		if (timer) window.clearTimeout(timer);
+	}
+
+	if (!res.status) throw new Error(t("errNetwork"));
+	if (res.status >= 200 && res.status < 300) return;
+	if (res.status === 401 || res.status === 403) throw new Error(t("errBadToken"));
+	// 422 with "already exists" → the branch is already on the remote. That's the
+	// caller's goal, so treat it as success (idempotent create).
+	if (res.status === 422 && refAlreadyExists(res)) return;
+	if (res.status === 404) throw new Error(t("errNotFound"));
+	throw new Error(t("errNetwork"));
+}
+
+/**
+ * True when a 422 response from POST /git/refs is GitHub's "Reference already
+ * exists". GitHub returns `{ message: "Reference already exists" }`; match it
+ * leniently (case-insensitive substring) so wording drift doesn't break us.
+ */
+function refAlreadyExists(res: { json?: unknown; text?: string }): boolean {
+	const msg = (res.json as { message?: unknown })?.message;
+	const fromJson = typeof msg === "string" ? msg : "";
+	const haystack = `${fromJson} ${res.text ?? ""}`.toLowerCase();
+	return haystack.includes("already exists");
+}
+
+/**
  * Compute a Git blob object id: SHA-1 of the bytes
  * `"blob " + <byteLength> + "\0"` followed by the content. This matches
  * `git hash-object` and the `sha` GitHub reports in a tree, so it lets us
