@@ -23,7 +23,7 @@ the plugin's `data.json` (plaintext — see *Security*).
 | `git.ts` | `GitManager` — all isomorphic-git logic: `sync`, `fetchAndMerge`, `pushLoop`, `completeMerge`, `initialize`, `listChanges`, staging, excludes, error mapping. |
 | `git-fs.ts` | `GitFs` — adapts Obsidian's `vault.adapter` to the `fs` interface isomorphic-git expects (binary/text, `stat`, path normalization). |
 | `git-http.ts` | `obsidianHttpClient` — HTTP client for isomorphic-git built on Obsidian's `requestUrl` (bypasses CORS). |
-| `github-sync.ts` | **The API sync engine** (default on mobile): `apiSync`/`commitResolutions` over the GitHub **Git Data API** (`requestUrl`). Per-blob pull + push (blobs→tree→commit→ref), SHA-baseline change detection — avoids isomorphic-git's whole-packfile OOM on large repos. Also `getBranchHead`/`getTree`/`getBlob`/`gitBlobSha`/`parseGitHubRepo`. |
+| `github-sync.ts` | **The API sync engine** (default on mobile): `apiSync`/`commitResolutions` over the GitHub **Git Data API** (`requestUrl`). Per-blob pull + push (blobs→tree→commit→ref), SHA-baseline change detection — avoids isomorphic-git's whole-packfile OOM on large repos. Also `getBranchHead`/`getTree`/`getBlob`/`gitBlobSha`/`parseGitHubRepo` and `createBranch` (creates a new branch ref on the remote, used by the settings branch picker so the first sync to a new branch doesn't 404). |
 | `github-api.ts` | `fetchGitHubUser`/`fetchGitHubRepos` — GitHub REST for the settings "Authorize" flow (autofills user/author, populates the repo picker). |
 | `conflict-modal.ts` | `ConflictModal` — git-engine per-file conflict resolution (local / remote / manual edit), then `completeMerge`. |
 | `api-conflict-modal.ts` | `ApiConflictModal` — content-based conflict resolution for the API engine (local / remote / manual; binary- and delete-aware); resolutions applied via `commitResolutions`. |
@@ -40,8 +40,15 @@ the plugin's `data.json` (plaintext — see *Security*).
   blobs one at a time, push local changes as one commit (blobs→tree→commit→
   `updateRef`). Clashes → `ApiConflictModal` → `commitResolutions`. Under the
   API engine the status bar shows no git change-count, and Review/selective +
-  Initialize are git-only. The plugin's own `data.json` is always excluded
-  (via `setAlwaysExclude` on the git side and the API `excluded` predicate).
+  Initialize are git-only — the Review ribbon icon isn't even registered (it's
+  removed, not hidden, so it stays out of the mobile ribbon menu;
+  `updateReviewRibbonVisibility` re-evaluates on settings change). Both engines
+  honor the user's `excludePaths` and the repo's `.gitignore` via the shared
+  `buildUserExcludeMatcher` (`git.ts`); the API side reads `.gitignore` through
+  the vault adapter. On top of that the API engine always skips the whole
+  config dir (`.obsidian/`) by design, and the plugin's own `data.json` (the
+  PAT) is always excluded by both engines (`setAlwaysExclude` on the git side,
+  the hardcoded `excluded` predicate on the API side).
 - **Git engine** (`GitManager.sync`):
 
 1. **Stage** changes (`stageAll`) — `statusMatrix` → `git.add`/`git.remove`,
@@ -86,13 +93,19 @@ the plugin's `data.json` (plaintext — see *Security*).
 npm install
 npm run build    # tsc --noEmit + esbuild → main.js (also the CI-style check)
 npm run dev      # esbuild watch
+npm test         # node scripts/regression.mjs — offline Git-semantics suite
 ```
 
-There is no test runner. Git semantics are validated with throwaway Node
-scripts against `node:fs` (create a temp repo, exercise merge/commit/staging,
-assert on the resulting trees) — this is the fastest way to verify changes to
-`git.ts` without launching Obsidian. The Obsidian-only layers (`GitFs`,
-`requestUrl` HTTP, modals) must be tested live in a vault.
+`npm test` runs an offline regression suite (`scripts/regression.mjs`) over
+throwaway temp repos, asserting the Git guarantees the plugin relies on
+(two-parent merges, conflict markers, the selective-sync snapshot/restore, NFC
+path collapsing, branch-name validation). Extend it with a new scenario when
+changing git semantics. For finer-grained or one-off checks, write throwaway
+Node scripts against `node:fs` / the bundled engine (e.g. the API exclusion
+predicate or `createBranch` request shape) — the fastest way to verify changes
+to `git.ts` / `github-sync.ts` without launching Obsidian. The Obsidian-only
+layers (`GitFs`, `requestUrl` HTTP, modals, ribbon/status bar) must be tested
+live in a vault — see [TESTING.md](./TESTING.md) for the live checklist.
 
 Dev install: symlink the project into a vault's `.obsidian/plugins/git-vault-sync/`.
 Reload the plugin (toggle off/on) after each rebuild to load the new `main.js`.
