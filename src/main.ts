@@ -28,9 +28,11 @@ export default class GitSyncPlugin extends Plugin {
 	private statusBarEl!: HTMLElement;
 	private statusIconEl!: HTMLElement;
 	private statusTextEl!: HTMLElement;
-	/** Ribbon icon for Review/selective sync; hidden under the API engine
-	 *  (the default on mobile), where that flow isn't available. */
-	private reviewRibbonEl!: HTMLElement;
+	/** Ribbon icon for Review/selective sync. Only registered under the git
+	 *  engine; under the API engine (the default on mobile) that flow isn't
+	 *  available, so the icon is removed entirely rather than just hidden —
+	 *  a display:none element still shows up in the mobile ribbon menu. */
+	private reviewRibbonEl?: HTMLElement;
 	private syncing = false;
 	private changeCount = 0;
 	private lastSyncError = false;
@@ -60,9 +62,7 @@ export default class GitSyncPlugin extends Plugin {
 			void this.sync();
 		});
 
-		this.reviewRibbonEl = this.addRibbonIcon("list-checks", t("ribbonReview"), () => {
-			this.openReview();
-		});
+		// Registered (or not) based on the effective engine; see below.
 		this.updateReviewRibbonVisibility();
 
 		this.statusBarEl = this.addStatusBarItem();
@@ -171,13 +171,25 @@ export default class GitSyncPlugin extends Plugin {
 	}
 
 	/**
-	 * Show the Review/selective-sync ribbon icon only under the git engine.
+	 * Register the Review/selective-sync ribbon icon only under the git engine.
 	 * The API engine (default on mobile) has no local repo to inspect, so the
-	 * flow isn't available there — hide the icon rather than offer a dead end.
-	 * Re-evaluated whenever settings change (the engine setting can switch it).
+	 * flow isn't available there. We add/remove the icon rather than hide it:
+	 * a display:none element still appears in the mobile ribbon menu, so hiding
+	 * wouldn't actually take it off the phone. Re-evaluated whenever settings
+	 * change (the engine setting can switch it).
 	 */
 	private updateReviewRibbonVisibility() {
-		this.reviewRibbonEl?.toggle(this.effectiveEngine() === "git");
+		const showReview = this.effectiveEngine() === "git";
+		if (showReview && !this.reviewRibbonEl) {
+			this.reviewRibbonEl = this.addRibbonIcon(
+				"list-checks",
+				t("ribbonReview"),
+				() => this.openReview()
+			);
+		} else if (!showReview && this.reviewRibbonEl) {
+			this.reviewRibbonEl.remove();
+			this.reviewRibbonEl = undefined;
+		}
 	}
 
 	/**
