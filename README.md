@@ -66,10 +66,14 @@ always excluded by both engines.
 
 ## Installation
 
-Git Vault Sync is not yet in the community plugin store. There are two ways to
-install it today.
+### From the community plugin store (recommended)
 
-### Via BRAT (recommended — auto-updates)
+1. In Obsidian: **Settings → Community plugins → Browse**.
+2. Search for **Git Vault Sync**, then **Install** and **Enable**.
+
+Updates then arrive automatically through Obsidian.
+
+### Via BRAT (early/beta builds — auto-updates)
 
 [BRAT](https://github.com/TfTHacker/obsidian42-brat) installs plugins straight
 from a GitHub repo and keeps them updated. Works on desktop and mobile.
@@ -110,7 +114,7 @@ verify the URL and token.
 
 ## Usage
 
-- **Sync** — click the circular-arrows ribbon icon, the status bar (→ *Sync
+- **Sync** — click the git-branch ribbon icon, the status bar (→ *Sync
   now*), or run *Sync vault with Git*.
 - **Review & sync** — click the checklist ribbon icon (or *Review changes &
   sync*) to open the commit preview, uncheck files, then **Sync selected**.
