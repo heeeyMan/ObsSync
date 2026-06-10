@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="assets/logo.png" alt="Git Vault Sync" width="128" height="128">
-</p>
-
 # Git Vault Sync
 
 One-click Git sync for [Obsidian](https://obsidian.md), with interactive conflict
