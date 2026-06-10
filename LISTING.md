@@ -12,36 +12,21 @@ with each release so the store entry stays accurate.
 ## Long description (About)
 
 ```markdown
-**Git Vault Sync** keeps your vault backed up and in sync across every device
-through your own GitHub repository — one button, no command line, no system Git.
-It's pure JavaScript, so it works on **Android and iOS** just like on desktop.
+**Git Vault Sync** backs up and syncs your whole vault through your own GitHub
+repo — one button, no command line, no system Git. Pure JavaScript, so it works
+on **Android and iOS** just like desktop.
 
-### Why it's different
-Most Git workflows choke on a phone. Git Vault Sync ships **two engines** and
-picks the right one automatically:
-- **Desktop → Git engine** — full local history and true two-parent merges.
-- **Mobile → GitHub API engine** — transfers one file at a time instead of a
-  whole packfile, so even large vaults sync on a phone without running out of
-  memory.
+It ships **two engines** and picks one automatically: a full Git engine on
+desktop, and a lighter GitHub-API engine on mobile that syncs even large vaults
+without running out of memory.
 
-Both talk to the same GitHub remote, so all your devices stay consistent.
+- **One-click sync** from the ribbon — stage, commit, fetch, merge, push.
+- **Interactive conflict resolution** — keep local, keep remote, or edit by hand.
+- **Commit preview** — uncheck what you're not ready to sync.
+- **Auto-sync**, status-bar indicator, excluded paths, and an EN/RU UI.
 
-### Features
-- **One-click sync** — stage → commit → fetch → merge → push, from the ribbon.
-- **Interactive conflict resolution** — a dialog lists each conflicting file and
-  lets you keep local, keep remote, or edit the merged result by hand.
-- **Commit preview / selective sync** — review every change and uncheck what you
-  don't want to commit yet. Deselected edits stay safe, even across a merge.
-- **Status-bar indicator** — pending change count, live spinner, ✓ when clean,
-  last-sync time on hover.
-- **Auto-sync** — on startup and/or on a timer.
-- **Excluded paths** — glob patterns and your repo's `.gitignore`, honored on
-  both engines.
-- **English & Russian UI**, following your Obsidian language.
-
-### Security
-Auth is HTTPS + a Personal Access Token, stored locally. The plugin's own token
-file is always excluded from sync — it can never be pushed by accident.
+Auth is HTTPS + a Personal Access Token, stored locally; the plugin's own token
+file is never synced.
 ```
 
 ## Tags / categories
