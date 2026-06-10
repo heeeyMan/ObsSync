@@ -118,9 +118,15 @@ verify the URL and token.
   now*), or run *Sync vault with Git*.
 - **Review & sync** — click the checklist ribbon icon (or *Review changes &
   sync*) to open the commit preview, uncheck files, then **Sync selected**.
+  This is git-engine only, so the icon is hidden under the API engine (the
+  default on mobile).
 - **Resolve conflicts** — if a merge conflicts, the resolution dialog opens
   automatically. Choose per file: *Use local*, *Use remote*, or *Edit
   manually*, then **Resolve & sync**. **Cancel** aborts the merge cleanly.
+- **Choose / create a branch** — in **Settings → Git Vault Sync** the branch
+  picker lists the remote's branches; pick *Create new…* to make one. The new
+  branch is created **on the remote** (forked from the current branch), so the
+  first sync to it doesn't fail with "branch not found".
 - **Initialize / link a repo** — on a fresh vault, **Settings → Git Vault Sync →
   Initialize** runs `git init`, links the remote, fetches, and checks out the
   remote branch.
