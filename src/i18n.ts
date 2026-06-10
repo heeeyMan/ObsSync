@@ -27,7 +27,6 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 		en: "Git Vault Sync: can't parse a GitHub owner/repo from the remote URL.",
 		ru: "Git Vault Sync: не удалось разобрать owner/repo GitHub из URL репозитория.",
 	},
-	apiSyncProgress: { en: "Git Vault Sync: {n}", ru: "Git Vault Sync: {n}" },
 
 	// --- status-bar menu ---
 	menuSyncNow: { en: "Sync now", ru: "Синхронизировать сейчас" },
@@ -104,6 +103,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 
 	// --- progress (status bar during sync) ---
 	progStaging: { en: "Staging changes…", ru: "Подготовка изменений…" },
+	progScanning: {
+		en: "Scanning local files…",
+		ru: "Сканирование локальных файлов…",
+	},
 	progCommitting: { en: "Committing {n} change(s)…", ru: "Коммит изменений: {n}…" },
 	progFetching: { en: "Fetching from remote…", ru: "Получение с сервера…" },
 	progMerging: { en: "Merging remote changes…", ru: "Слияние изменений…" },
@@ -140,6 +143,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	errNotFound: {
 		en: "Remote or branch not found — check the URL and branch name.",
 		ru: "Репозиторий или ветка не найдены — проверьте URL и имя ветки.",
+	},
+	errTreeTruncated: {
+		en: "The repository is too large for the API sync engine (GitHub returned a truncated file list). Sync was stopped to avoid data loss. Use the Git sync engine on desktop, or split the vault.",
+		ru: "Репозиторий слишком большой для API-движка синхронизации (GitHub вернул усечённый список файлов). Синхронизация остановлена во избежание потери данных. Используйте Git-движок на десктопе или разделите хранилище.",
 	},
 	errPushRejected: {
 		en: "Push rejected: the remote changed during sync. Run Sync again.",
@@ -253,6 +260,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	setExcludeDesc: {
 		en: "One pattern per line — files matching these are never committed or counted (e.g. *.tmp, secrets/). Use * within a folder, ** across folders, and a trailing / for a whole folder.",
 		ru: "По одному шаблону на строку — совпавшие файлы не коммитятся и не считаются (напр. *.tmp, secrets/). * — внутри папки, ** — через папки, / в конце — вся папка.",
+	},
+	setExcludeHint: {
+		en: "These patterns (and the repo's .gitignore) apply on both the Git and GitHub API engines. Note: the GitHub API engine (used on mobile) always skips the whole config folder (.obsidian/) regardless of these patterns — it syncs only your notes, not Obsidian settings.",
+		ru: "Эти шаблоны (и .gitignore репозитория) действуют в обоих движках — Git и GitHub API. Учтите: движок GitHub API (используется на мобильном) всегда пропускает всю папку конфигурации (.obsidian/) независимо от шаблонов — синхронизируются только заметки, а не настройки Obsidian.",
 	},
 	headRepo: { en: "Repository", ru: "Репозиторий" },
 	setInitName: { en: "Initialize / link repository", ru: "Инициализировать / привязать репозиторий" },

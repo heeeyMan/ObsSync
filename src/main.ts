@@ -1,10 +1,15 @@
-import { Menu, Notice, Platform, Plugin, setIcon } from "obsidian";
+import { Menu, Notice, Platform, Plugin, addIcon, setIcon } from "obsidian";
 import {
 	DEFAULT_SETTINGS,
 	GitSyncSettings,
 	GitSyncSettingTab,
 } from "./settings";
-import { GitManager, MergeConflict } from "./git";
+import {
+	GitManager,
+	MergeConflict,
+	buildUserExcludeMatcher,
+	parseGitignore,
+} from "./git";
 import { ConflictModal } from "./conflict-modal";
 import { ReviewModal } from "./review-modal";
 import {
@@ -16,6 +21,21 @@ import {
 } from "./github-sync";
 import { ApiConflictFile, ApiConflictModal } from "./api-conflict-modal";
 import { setLanguage, t } from "./i18n";
+
+/**
+ * The plugin's brand glyph (a filled git-branch), registered with Obsidian's
+ * icon registry under {@link BRAND_ICON} and used for the main ribbon button.
+ * Content is the inner markup of a 0 0 100 100 SVG; `currentColor` lets it
+ * follow the active theme (kept in sync with `assets/icon.svg`).
+ */
+const BRAND_ICON = "git-vault-sync";
+const BRAND_ICON_SVG = `
+  <g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="27.2" y1="15.8" x2="27.2" y2="61.4"/>
+    <path d="M 72.8 38.6 A 34.2 34.2 0 0 1 38.6 72.8"/>
+  </g>
+  <circle cx="72.8" cy="27.2" r="11.4" fill="currentColor"/>
+  <circle cx="27.2" cy="72.8" r="11.4" fill="currentColor"/>`;
 
 export default class GitSyncPlugin extends Plugin {
 	settings!: GitSyncSettings;
@@ -48,7 +68,8 @@ export default class GitSyncPlugin extends Plugin {
 			`${this.app.vault.configDir}/plugins/${this.manifest.id}/data.json`,
 		]);
 
-		this.addRibbonIcon("refresh-cw", t("ribbonSync"), () => {
+		addIcon(BRAND_ICON, BRAND_ICON_SVG);
+		this.addRibbonIcon(BRAND_ICON, t("ribbonSync"), () => {
 			void this.sync();
 		});
 
@@ -308,9 +329,34 @@ export default class GitSyncPlugin extends Plugin {
 		const branch = this.settings.branch || "main";
 		const token = this.settings.token;
 
-		// excluded predicate: the config dir (usually .obsidian), the repo's own
-		// .git, the conflicts staging folder, any leftover diagnostic log notes
-		// from old test runs, and this plugin's data.json (which holds the PAT).
+		// User-configurable exclusions: the `excludePaths` setting + the repo's
+		// root .gitignore, matched with the SAME glob semantics as the git engine
+		// (shared `buildUserExcludeMatcher`/`parseGitignore` from git.ts). On
+		// mobile the API engine doesn't go through GitManager, so we read the root
+		// .gitignore directly via the vault adapter here. Missing/unreadable →
+		// excludePaths only. This fixes the old asymmetry where a path the user
+		// excluded on desktop was still pushed from mobile.
+		const adapter = this.app.vault.adapter;
+		let gitignorePatterns: string[] = [];
+		try {
+			if (await adapter.exists(".gitignore")) {
+				gitignorePatterns = parseGitignore(
+					await adapter.read(".gitignore")
+				);
+			}
+		} catch {
+			gitignorePatterns = [];
+		}
+		const matchesUser = buildUserExcludeMatcher(
+			this.settings.excludePaths,
+			gitignorePatterns
+		);
+
+		// excluded predicate: hardcoded exclusions ON TOP OF the user patterns —
+		// the config dir (usually .obsidian; intentionally always skipped by the
+		// API engine, see README), the repo's own .git, the conflicts staging
+		// folder, any leftover diagnostic log notes from old test runs, and this
+		// plugin's data.json (which holds the PAT). These can't be turned off.
 		const configDir = this.app.vault.configDir;
 		const dataJson = `${this.manifest.dir ?? ""}/data.json`.replace(
 			/^\/+/,
@@ -329,6 +375,8 @@ export default class GitSyncPlugin extends Plugin {
 			)
 				return true;
 			if (dataJson && path === dataJson) return true;
+			// User-configured excludePaths / .gitignore (same globs as git engine).
+			if (matchesUser(path)) return true;
 			return false;
 		};
 
@@ -610,8 +658,11 @@ export default class GitSyncPlugin extends Plugin {
 					content,
 				})),
 				message,
+				// `msg` is already a localized progress string from github-sync's
+				// onProgress (e.g. t("progPushing")); just prefix it the same way
+				// syncApi does, instead of re-wrapping it through another t() key.
 				onProgress: (msg) =>
-					resolveNotice.setMessage(t("apiSyncProgress", { n: msg })),
+					resolveNotice.setMessage("Git Vault Sync: " + msg),
 			});
 
 			// Persist the updated baseline so resolved paths are now in sync.
