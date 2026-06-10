@@ -1,4 +1,4 @@
-import { Menu, Notice, Platform, Plugin, addIcon, setIcon } from "obsidian";
+import { Menu, Notice, Platform, Plugin, setIcon } from "obsidian";
 import {
 	DEFAULT_SETTINGS,
 	GitSyncSettings,
@@ -22,27 +22,15 @@ import {
 import { ApiConflictFile, ApiConflictModal } from "./api-conflict-modal";
 import { setLanguage, t } from "./i18n";
 
-/**
- * The plugin's brand glyph (a filled git-branch), registered with Obsidian's
- * icon registry under {@link BRAND_ICON} and used for the main ribbon button.
- * Content is the inner markup of a 0 0 100 100 SVG; `currentColor` lets it
- * follow the active theme (kept in sync with `assets/icon.svg`).
- */
-const BRAND_ICON = "git-vault-sync";
-const BRAND_ICON_SVG = `
-  <g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
-    <line x1="27.2" y1="15.8" x2="27.2" y2="61.4"/>
-    <path d="M 72.8 38.6 A 34.2 34.2 0 0 1 38.6 72.8"/>
-  </g>
-  <circle cx="72.8" cy="27.2" r="11.4" fill="currentColor"/>
-  <circle cx="27.2" cy="72.8" r="11.4" fill="currentColor"/>`;
-
 export default class GitSyncPlugin extends Plugin {
 	settings!: GitSyncSettings;
 	git!: GitManager;
 	private statusBarEl!: HTMLElement;
 	private statusIconEl!: HTMLElement;
 	private statusTextEl!: HTMLElement;
+	/** Ribbon icon for Review/selective sync; hidden under the API engine
+	 *  (the default on mobile), where that flow isn't available. */
+	private reviewRibbonEl!: HTMLElement;
 	private syncing = false;
 	private changeCount = 0;
 	private lastSyncError = false;
@@ -68,14 +56,14 @@ export default class GitSyncPlugin extends Plugin {
 			`${this.app.vault.configDir}/plugins/${this.manifest.id}/data.json`,
 		]);
 
-		addIcon(BRAND_ICON, BRAND_ICON_SVG);
-		this.addRibbonIcon(BRAND_ICON, t("ribbonSync"), () => {
+		this.addRibbonIcon("refresh-cw", t("ribbonSync"), () => {
 			void this.sync();
 		});
 
-		this.addRibbonIcon("list-checks", t("ribbonReview"), () => {
+		this.reviewRibbonEl = this.addRibbonIcon("list-checks", t("ribbonReview"), () => {
 			this.openReview();
 		});
+		this.updateReviewRibbonVisibility();
 
 		this.statusBarEl = this.addStatusBarItem();
 		this.statusBarEl.addClass("gitsync-status-bar");
@@ -179,6 +167,17 @@ export default class GitSyncPlugin extends Plugin {
 	async saveSettings() {
 		await this.saveData(this.settings);
 		setLanguage(this.settings.language);
+		this.updateReviewRibbonVisibility();
+	}
+
+	/**
+	 * Show the Review/selective-sync ribbon icon only under the git engine.
+	 * The API engine (default on mobile) has no local repo to inspect, so the
+	 * flow isn't available there — hide the icon rather than offer a dead end.
+	 * Re-evaluated whenever settings change (the engine setting can switch it).
+	 */
+	private updateReviewRibbonVisibility() {
+		this.reviewRibbonEl?.toggle(this.effectiveEngine() === "git");
 	}
 
 	/**

@@ -114,7 +114,7 @@ verify the URL and token.
 
 ## Usage
 
-- **Sync** — click the git-branch ribbon icon, the status bar (→ *Sync
+- **Sync** — click the circular-arrows ribbon icon, the status bar (→ *Sync
   now*), or run *Sync vault with Git*.
 - **Review & sync** — click the checklist ribbon icon (or *Review changes &
   sync*) to open the commit preview, uncheck files, then **Sync selected**.

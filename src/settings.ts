@@ -1,5 +1,6 @@
 import {
 	App,
+	ButtonComponent,
 	DropdownComponent,
 	Notice,
 	PluginSettingTab,
@@ -8,7 +9,7 @@ import {
 } from "obsidian";
 import type GitSyncPlugin from "./main";
 import { fetchGitHubRepos, fetchGitHubUser, GitHubRepo } from "./github-api";
-import type { ApiSyncBaseline } from "./github-sync";
+import { type ApiSyncBaseline, createBranch, parseGitHubRepo } from "./github-sync";
 import { LangPref, t } from "./i18n";
 
 export interface GitSyncSettings {
@@ -83,6 +84,9 @@ export class GitSyncSettingTab extends PluginSettingTab {
 	private remoteBranches: string[] = [];
 	private branchesFetched = false;
 	private creatingBranch = false;
+	/** Base branch captured when "Create new…" was chosen, off which the new
+	 *  remote branch is created. Snapshotted before `s.branch` could change. */
+	private createBranchBase = "main";
 	/** Repositories fetched from GitHub after authorization (for the remote
 	 *  dropdown). Empty until the user authorizes. */
 	private repos: GitHubRepo[] = [];
@@ -536,6 +540,11 @@ export class GitSyncSettingTab extends PluginSettingTab {
 				dd.addOption(NEW_BRANCH, t("branchNew"));
 				dd.setValue(s.branch || "main").onChange(async (value) => {
 					if (value === NEW_BRANCH) {
+						// Snapshot the current branch as the base off which the new
+						// remote branch is created, BEFORE entering create mode (we
+						// never write the in-progress name to s.branch, so this stays
+						// the real base). Fallback to "main" if nothing is set.
+						this.createBranchBase = s.branch || "main";
 						this.creatingBranch = true;
 						this.display();
 						return;
@@ -552,33 +561,49 @@ export class GitSyncSettingTab extends PluginSettingTab {
 			);
 
 		if (this.creatingBranch) {
+			// The in-progress name lives only here — it's NEVER written to
+			// s.branch until the remote branch is successfully created. That way a
+			// failed/aborted create leaves the active branch untouched.
+			let newName = "";
+			let createBtnSetDisabled: ((d: boolean) => void) | null = null;
+
 			const newBranchSetting = new Setting(containerEl)
 				.setName(t("branchNewName"))
+				.setDesc(t("branchBaseLabel", { branch: this.createBranchBase }))
 				.addText((text) =>
 					text
 						.setPlaceholder("feature/notes")
-						.onChange(async (value) => {
-							const name = value.trim();
-							// Empty input: leave the existing branch untouched and
-							// clear any error (don't save a blank name).
-							if (!name) {
+						.onChange((value) => {
+							newName = value.trim();
+							// Empty input: clear any error, disable Create (don't
+							// touch s.branch — the name is held locally).
+							if (!newName) {
 								updateBranchError(null);
+								createBtnSetDisabled?.(true);
 								return;
 							}
-							if (!isValidBranchName(name)) {
+							if (!isValidBranchName(newName)) {
 								updateBranchError(t("branchInvalid"));
+								createBtnSetDisabled?.(true);
 								return;
 							}
 							updateBranchError(null);
-							s.branch = name;
-							await this.plugin.saveSettings();
+							createBtnSetDisabled?.(false);
 						})
 				)
+				.addButton((b) => {
+					b.setButtonText(t("branchCreate")).setCta();
+					b.setDisabled(true);
+					createBtnSetDisabled = (d) => b.setDisabled(d);
+					b.onClick(() => void this.confirmCreateBranch(newName, b));
+				})
 				.addExtraButton((b) =>
 					b
 						.setIcon("check")
 						.setTooltip(t("branchDone"))
 						.onClick(() => {
+							// Done just collapses the create UI without creating a
+							// branch or switching s.branch.
 							this.creatingBranch = false;
 							this.display();
 						})
@@ -591,6 +616,63 @@ export class GitSyncSettingTab extends PluginSettingTab {
 				branchError.toggleClass("gitsync-hidden", !msg);
 			};
 			updateBranchError(null);
+		}
+	}
+
+	/**
+	 * Create the new branch on the remote (GitHub Git Data API), then adopt it.
+	 *
+	 * Engine-independent: creating the ref only needs the GitHub API, so it works
+	 * the same on desktop (Git engine) and mobile (API engine). The new branch is
+	 * created off {@link createBranchBase} (the branch captured when the user
+	 * picked "Create new…", NOT the in-progress name).
+	 *
+	 * On success: switch s.branch to the new name, persist, add it to the known
+	 * remote branches, collapse the create UI. On any failure: keep the UI open
+	 * and DO NOT switch s.branch.
+	 */
+	private async confirmCreateBranch(
+		newName: string,
+		btn: ButtonComponent,
+	): Promise<void> {
+		const s = this.plugin.settings;
+		const name = newName.trim();
+		if (!name || !isValidBranchName(name)) return;
+
+		// Credentials are required to talk to the remote.
+		if (!s.remoteUrl || !s.token) {
+			new Notice(t("noticeConfigure"));
+			return;
+		}
+
+		// Branch creation goes through the GitHub API, so the remote must be a
+		// parseable GitHub HTTPS URL regardless of the active sync engine.
+		const parsed = parseGitHubRepo(s.remoteUrl);
+		if (!parsed) {
+			new Notice(t("branchCreateNeedsGitHub"));
+			return;
+		}
+
+		const base = this.createBranchBase || "main";
+		const original = t("branchCreate");
+		btn.setDisabled(true).setButtonText(t("branchCreating", { branch: name }));
+		new Notice(t("branchCreating", { branch: name }));
+		try {
+			await createBranch(parsed.owner, parsed.repo, name, base, s.token);
+			// Success (created, or already existed → idempotent). Adopt it.
+			s.branch = name;
+			if (!this.remoteBranches.includes(name)) this.remoteBranches.push(name);
+			await this.plugin.saveSettings();
+			this.creatingBranch = false;
+			new Notice(t("branchCreated", { branch: name }));
+			this.display();
+		} catch (err) {
+			console.error("Git Vault Sync create branch failed", err);
+			new Notice(
+				t("branchCreateFailed", { branch: name, msg: (err as Error).message }),
+			);
+			// Leave the create UI open; s.branch stays unchanged.
+			btn.setDisabled(false).setButtonText(original);
 		}
 	}
 
