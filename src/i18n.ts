@@ -255,8 +255,8 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	setUserDesc: { en: "Your GitHub username.", ru: "Ваше имя пользователя GitHub." },
 	setTokenName: { en: "Personal Access Token", ru: "Персональный токен (PAT)" },
 	setTokenDesc: {
-		en: "Stored in plaintext in this plugin's data.json. Use a fine-grained token scoped to this repo.",
-		ru: "Хранится в открытом виде в data.json плагина. Используйте токен с доступом только к этому репозиторию.",
+		en: "Stored in plaintext in this plugin's data.json. Use a fine-grained token scoped to this repo (Contents: Read and write) with an expiration date.",
+		ru: "Хранится в открытом виде в data.json плагина. Используйте fine-grained токен с доступом только к этому репозиторию (право Contents: чтение и запись) и сроком действия.",
 	},
 	headCommits: { en: "Commits", ru: "Коммиты" },
 	setAuthorNameName: { en: "Author name", ru: "Имя автора" },
@@ -346,6 +346,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	cmResolve: { en: "Resolve & sync", ru: "Разрешить и синхронизировать" },
 	cmSyncing: { en: "Syncing…", ru: "Синхронизация…" },
 	cmCancel: { en: "Cancel (abort merge)", ru: "Отмена (прервать слияние)" },
+	// wizard navigation (one conflict per step, mobile-friendly)
+	cmProgress: { en: "Conflict {i} of {n}", ru: "Конфликт {i} из {n}" },
+	cmBack: { en: "Back", ru: "Назад" },
+	cmNext: { en: "Next", ru: "Далее" },
 
 	// --- API conflict modal (Git Data API sync) ---
 	acmTitle: {

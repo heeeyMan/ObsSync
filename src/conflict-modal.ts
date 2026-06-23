@@ -6,6 +6,7 @@ import {
 	SyncResult,
 } from "./git";
 import { t } from "./i18n";
+import { keepModalAboveKeyboard, scrollIntoViewOnFocus } from "./mobile-keyboard";
 
 type Choice = "local" | "remote" | "manual";
 
@@ -27,6 +28,13 @@ export class ConflictModal extends Modal {
 	private finished = false;
 	/** True while completeMerge is running, to block a racing abort on close. */
 	private resolving = false;
+	/** One rendered card per conflicting file; only the current one is shown. */
+	private steps: HTMLElement[] = [];
+	private current = 0;
+	private progressEl!: HTMLElement;
+	private body!: HTMLElement;
+	private footer!: HTMLElement;
+	private cleanupKeyboard: () => void = () => {};
 	/** Optional callback invoked once when the modal closes (used by the plugin
 	 *  to drop its reference). */
 	onCloseHook?: () => void;
@@ -46,10 +54,15 @@ export class ConflictModal extends Modal {
 		modalEl.addClass("gitsync-conflict-modal");
 		titleEl.setText(t("cmTitle", { n: this.conflict.files.length }));
 
-		// Scrollable body holds the intro + per-file editors; the footer with
-		// the action buttons is pinned below so it stays reachable on mobile.
+		// Scrollable body holds a pinned progress line + intro and one file card
+		// at a time (a wizard); the footer with the navigation buttons is pinned
+		// below so it stays reachable on mobile.
 		const body = contentEl.createDiv({ cls: "gitsync-conflict-body" });
-		body.createEl("p", { text: t("cmIntro") });
+		this.body = body;
+		this.progressEl = body.createEl("p", {
+			cls: "gitsync-conflict-progress",
+		});
+		body.createEl("p", { text: t("cmIntro"), cls: "gitsync-conflict-intro" });
 
 		const loading = body.createEl("p", { text: t("cmLoading") });
 		try {
@@ -77,21 +90,54 @@ export class ConflictModal extends Modal {
 			this.renderFile(body, state);
 		}
 
-		const footer = contentEl.createDiv({ cls: "gitsync-conflict-footer" });
-		new Setting(footer)
-			.addButton((b) =>
-				b
-					.setButtonText(t("cmResolve"))
-					.setCta()
-					.onClick(() => void this.resolve(b.buttonEl))
-			)
-			.addButton((b) =>
-				b.setButtonText(t("cmCancel")).onClick(() => void this.cancel())
-			);
+		this.footer = contentEl.createDiv({ cls: "gitsync-conflict-footer" });
+		this.showStep(0);
+
+		// Keep the active editor reachable above the on-screen keyboard (mobile).
+		this.cleanupKeyboard = keepModalAboveKeyboard(modalEl, contentEl);
+	}
+
+	/** Show a single conflict step and rebuild the navigation footer for it. */
+	private showStep(index: number) {
+		this.current = index;
+		this.steps.forEach((step, i) =>
+			step.toggleClass("gitsync-hidden", i !== index)
+		);
+		this.progressEl.setText(
+			t("cmProgress", { i: index + 1, n: this.steps.length })
+		);
+		this.progressEl.toggleClass("gitsync-hidden", this.steps.length <= 1);
+		this.body.scrollTop = 0;
+		this.renderFooter();
+	}
+
+	private renderFooter() {
+		this.footer.empty();
+		const nav = this.footer.createDiv({ cls: "gitsync-wizard-nav" });
+		const isLast = this.current === this.steps.length - 1;
+		if (this.current > 0) {
+			const back = nav.createEl("button", { text: t("cmBack") });
+			back.addEventListener("click", () => this.showStep(this.current - 1));
+		}
+		if (isLast) {
+			const done = nav.createEl("button", {
+				text: t("cmResolve"),
+				cls: "mod-cta",
+			});
+			done.addEventListener("click", () => void this.resolve(done));
+		} else {
+			const next = nav.createEl("button", {
+				text: t("cmNext"),
+				cls: "mod-cta",
+			});
+			next.addEventListener("click", () => this.showStep(this.current + 1));
+		}
 	}
 
 	private renderFile(parent: HTMLElement, state: FileState) {
-		parent.createEl("h3", { text: state.filepath });
+		const step = parent.createDiv({ cls: "gitsync-conflict-step" });
+		this.steps.push(step);
+		step.createEl("h3", { text: state.filepath });
 
 		const editor = createDiv();
 		const textarea = editor.createEl("textarea", {
@@ -101,8 +147,9 @@ export class ConflictModal extends Modal {
 		textarea.addEventListener("input", () => {
 			state.manual = textarea.value;
 		});
+		scrollIntoViewOnFocus(textarea);
 
-		new Setting(parent)
+		new Setting(step)
 			.setName(t("cmResolution"))
 			.addDropdown((dd) => {
 				dd.addOption("manual", t("cmOptManual"))
@@ -118,8 +165,11 @@ export class ConflictModal extends Modal {
 					});
 			});
 
+		// Editor sits directly under the resolution dropdown (above the preview).
+		step.appendChild(editor);
+
 		// Read-only preview of both sides.
-		const details = parent.createEl("details");
+		const details = step.createEl("details");
 		details.createEl("summary", { text: t("cmShow") });
 		const pre = details.createEl("pre", { cls: "gitsync-conflict-preview" });
 		const del = t("cmDeleted");
@@ -127,8 +177,6 @@ export class ConflictModal extends Modal {
 			`===== ${t("cmOptLocal")} =====\n${state.ours ?? del}\n\n` +
 				`===== ${t("cmOptRemote")} =====\n${state.theirs ?? del}`
 		);
-
-		parent.appendChild(editor);
 	}
 
 	private async resolve(button: HTMLButtonElement) {
@@ -169,14 +217,8 @@ export class ConflictModal extends Modal {
 		}
 	}
 
-	private async cancel() {
-		this.finished = true;
-		await this.abortAndRestore();
-		this.onAborted();
-		this.close();
-	}
-
 	onClose() {
+		this.cleanupKeyboard();
 		this.contentEl.empty();
 		this.onCloseHook?.();
 		// Dismissed (Esc/click-outside) without resolving and not mid-resolve:

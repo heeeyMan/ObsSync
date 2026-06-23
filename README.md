@@ -61,8 +61,8 @@ always excluded by both engines.
 ## Requirements
 
 - A Git repository on GitHub (or any HTTPS Git host).
-- A **Personal Access Token** (PAT). For a fine-grained token, grant the repo
-  **Contents: Read and write**.
+- A **Personal Access Token** (PAT). Prefer a fine-grained token scoped to the
+  single repo, with **Contents: Read and write** and an expiration date.
 
 ## Installation
 
@@ -164,7 +164,8 @@ non-obvious gotchas).
   `.obsidian/plugins/git-vault-sync/data.json` (or the whole plugin folder) is in your
   vault's `.gitignore`, or your token will be pushed to the remote.
 - Use a **fine-grained token** scoped to the single repo with **Contents: Read
-  and write**, so a leak has the smallest possible blast radius.
+  and write** and an **expiration date**, so a leak has the smallest possible
+  blast radius.
 
 ## License
 

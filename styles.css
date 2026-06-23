@@ -71,11 +71,35 @@
 	margin-top: 8px;
 }
 
-/* Shrink the editor on narrow (phone) widths so several files plus the
-   footer fit without endless scrolling. */
+/* Wizard: one conflict per step. The progress line + intro stay pinned at the
+   top of the scrollable body; each file lives in its own step card. */
+.gitsync-conflict-progress {
+	margin: 0 0 4px;
+	font-weight: 600;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.gitsync-conflict-intro {
+	margin-top: 0;
+}
+
+/* Navigation buttons (Back / Next / Resolve) span the footer width so they're
+   easy touch targets and the primary action is unmissable on a phone. */
+.gitsync-wizard-nav {
+	display: flex;
+	gap: 8px;
+}
+
+.gitsync-wizard-nav button {
+	flex: 1 1 0;
+}
+
+/* On narrow (phone) widths the wizard shows one file at a time, so the editor
+   can take a comfortable chunk of the (keyboard-bounded) modal height. */
 @media (max-width: 600px) {
 	.gitsync-conflict-editor {
-		min-height: 96px;
+		min-height: 30vh;
 	}
 }
 

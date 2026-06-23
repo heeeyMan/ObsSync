@@ -1,5 +1,6 @@
 import { App, Modal, Setting } from "obsidian";
 import { t } from "./i18n";
+import { keepModalAboveKeyboard, scrollIntoViewOnFocus } from "./mobile-keyboard";
 
 /**
  * One conflicting file, with both sides' content already resolved to bytes by
@@ -54,6 +55,13 @@ interface FileState {
 export class ApiConflictModal extends Modal {
 	private states: FileState[] = [];
 	private finished = false;
+	/** One rendered card per conflicting file; only the current one is shown. */
+	private steps: HTMLElement[] = [];
+	private current = 0;
+	private progressEl!: HTMLElement;
+	private body!: HTMLElement;
+	private footer!: HTMLElement;
+	private cleanupKeyboard: () => void = () => {};
 	onCloseHook?: () => void;
 
 	constructor(
@@ -75,7 +83,13 @@ export class ApiConflictModal extends Modal {
 		titleEl.setText(t("acmTitle", { n: this.files.length }));
 
 		const body = contentEl.createDiv({ cls: "gitsync-conflict-body" });
-		body.createEl("p", { text: t("acmIntro") });
+		this.body = body;
+		// One conflict per step: a progress line + short intro stay pinned at the
+		// top, while each file's editor lives in its own card shown one at a time.
+		this.progressEl = body.createEl("p", {
+			cls: "gitsync-conflict-progress",
+		});
+		body.createEl("p", { text: t("acmIntro"), cls: "gitsync-conflict-intro" });
 
 		for (const file of this.files) {
 			const localDeleted = file.localContent === null;
@@ -108,21 +122,54 @@ export class ApiConflictModal extends Modal {
 			this.renderFile(body, state);
 		}
 
-		const footer = contentEl.createDiv({ cls: "gitsync-conflict-footer" });
-		new Setting(footer)
-			.addButton((b) =>
-				b
-					.setButtonText(t("acmResolve"))
-					.setCta()
-					.onClick(() => this.resolve())
-			)
-			.addButton((b) =>
-				b.setButtonText(t("acmCancel")).onClick(() => this.cancel())
-			);
+		this.footer = contentEl.createDiv({ cls: "gitsync-conflict-footer" });
+		this.showStep(0);
+
+		// Keep the active editor reachable above the on-screen keyboard (mobile).
+		this.cleanupKeyboard = keepModalAboveKeyboard(modalEl, contentEl);
+	}
+
+	/** Show a single conflict step and rebuild the navigation footer for it. */
+	private showStep(index: number) {
+		this.current = index;
+		this.steps.forEach((step, i) =>
+			step.toggleClass("gitsync-hidden", i !== index)
+		);
+		this.progressEl.setText(
+			t("cmProgress", { i: index + 1, n: this.steps.length })
+		);
+		this.progressEl.toggleClass("gitsync-hidden", this.steps.length <= 1);
+		this.body.scrollTop = 0;
+		this.renderFooter();
+	}
+
+	private renderFooter() {
+		this.footer.empty();
+		const nav = this.footer.createDiv({ cls: "gitsync-wizard-nav" });
+		const isLast = this.current === this.steps.length - 1;
+		if (this.current > 0) {
+			const back = nav.createEl("button", { text: t("cmBack") });
+			back.addEventListener("click", () => this.showStep(this.current - 1));
+		}
+		if (isLast) {
+			const done = nav.createEl("button", {
+				text: t("acmResolve"),
+				cls: "mod-cta",
+			});
+			done.addEventListener("click", () => this.resolve());
+		} else {
+			const next = nav.createEl("button", {
+				text: t("cmNext"),
+				cls: "mod-cta",
+			});
+			next.addEventListener("click", () => this.showStep(this.current + 1));
+		}
 	}
 
 	private renderFile(parent: HTMLElement, state: FileState) {
-		parent.createEl("h3", { text: state.file.path });
+		const step = parent.createDiv({ cls: "gitsync-conflict-step" });
+		this.steps.push(step);
+		step.createEl("h3", { text: state.file.path });
 
 		const editor = createDiv();
 		const textarea = editor.createEl("textarea", {
@@ -132,6 +179,7 @@ export class ApiConflictModal extends Modal {
 		textarea.addEventListener("input", () => {
 			state.manual = textarea.value;
 		});
+		scrollIntoViewOnFocus(textarea);
 
 		// Frame each option per the kind of clash so the wording matches reality:
 		// a deleted side reads "keep deleted" / "restore", not "use … version".
@@ -142,7 +190,7 @@ export class ApiConflictModal extends Modal {
 			? t("acmRemoteDeleted")
 			: t("cmOptRemote");
 
-		const setting = new Setting(parent).setName(t("cmResolution"));
+		const setting = new Setting(step).setName(t("cmResolution"));
 		setting.addDropdown((dd) => {
 			// Manual edit only makes sense for text on both available sides.
 			if (!state.binary && !state.localDeleted && !state.remoteDeleted) {
@@ -160,8 +208,12 @@ export class ApiConflictModal extends Modal {
 				});
 		});
 
+		// Editor sits directly under the resolution dropdown (above the preview).
+		editor.toggleClass("gitsync-hidden", state.choice !== "manual");
+		step.appendChild(editor);
+
 		// Read-only preview of both sides (text shown decoded; binary noted).
-		const details = parent.createEl("details");
+		const details = step.createEl("details");
 		details.createEl("summary", { text: t("cmShow") });
 		const pre = details.createEl("pre", {
 			cls: "gitsync-conflict-preview",
@@ -174,9 +226,6 @@ export class ApiConflictModal extends Modal {
 					state.file.remoteContent
 				)}`
 		);
-
-		editor.toggleClass("gitsync-hidden", state.choice !== "manual");
-		parent.appendChild(editor);
 	}
 
 	/** Human-readable preview: text decoded, deletions and binaries labelled. */
@@ -209,13 +258,8 @@ export class ApiConflictModal extends Modal {
 		this.close();
 	}
 
-	private cancel() {
-		this.finished = true;
-		this.onCancelled();
-		this.close();
-	}
-
 	onClose() {
+		this.cleanupKeyboard();
 		this.contentEl.empty();
 		this.onCloseHook?.();
 		// Dismissed (Esc / click-outside) without choosing: treat as a cancel so
