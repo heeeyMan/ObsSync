@@ -94,11 +94,7 @@ export class ConflictModal extends Modal {
 		this.showStep(0);
 
 		// Keep the active editor reachable above the on-screen keyboard (mobile).
-		this.cleanupKeyboard = keepModalAboveKeyboard(
-			this.containerEl,
-			modalEl,
-			contentEl
-		);
+		this.cleanupKeyboard = keepModalAboveKeyboard(this.containerEl, modalEl);
 	}
 
 	/** Show a single conflict step and rebuild the navigation footer for it. */

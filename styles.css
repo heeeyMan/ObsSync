@@ -248,6 +248,22 @@
 	}
 }
 
+/* On mobile the conflict modal is height-bounded to the keyboard-free area
+   (see mobile-keyboard.ts). Lay it out as a flex column so its content fills
+   that box and the scroll lives inside the file card — the pinned footer
+   (Resolve / navigation) then always stays on screen, never under the
+   keyboard. */
+body.is-mobile .gitsync-conflict-modal {
+	display: flex;
+	flex-direction: column;
+}
+
+body.is-mobile .gitsync-conflict-modal .modal-content {
+	flex: 1 1 auto;
+	min-height: 0;
+	max-height: none;
+}
+
 body.is-mobile .gitsync-review-row {
 	padding: 11px 10px;
 	gap: 12px;

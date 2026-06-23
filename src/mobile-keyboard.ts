@@ -12,33 +12,39 @@ import { Platform } from "obsidian";
  * Obsidian centres it (and animates it) with its own transform, so overriding
  * `left`/`transform` would fight that and shove the modal off-screen.
  *
+ * The modal is also given a flex layout on mobile (see styles.css) so its body
+ * scrolls internally and the action footer stays pinned and visible — the rest
+ * of this helper just bounds the modal's height to the keyboard-free area and
+ * keeps it clear of the system status bar via the top safe-area inset.
+ *
  * Desktop is left completely untouched (no-op). Returns a cleanup function that
  * removes the listeners and restores the inline styles; call it on modal close.
  */
 export function keepModalAboveKeyboard(
 	containerEl: HTMLElement,
-	modalEl: HTMLElement,
-	contentEl: HTMLElement
+	modalEl: HTMLElement
 ): () => void {
 	if (!Platform.isMobile) return () => {};
 	const vv = window.visualViewport;
 	if (!vv) return () => {};
 
-	const GAP = 8; // breathing room above the modal, in px
+	const GAP = 8; // breathing room above/below the modal, in px
+	// Respect the notch/status-bar inset so the title isn't drawn under it.
+	const safeTop = "env(safe-area-inset-top, 0px)";
 
 	const apply = () => {
+		const h = Math.round(vv.height);
 		// Shrink the (full-screen, flex-centring) container down to just the
 		// visible region and pin the modal to its top. Horizontal centring,
 		// driven by the container's own `justify-content`, is left intact.
-		containerEl.style.height = `${Math.round(vv.height)}px`;
+		containerEl.style.height = `${h}px`;
 		containerEl.style.top = `${Math.round(vv.offsetTop)}px`;
 		containerEl.style.alignItems = "flex-start";
-		containerEl.style.paddingTop = `${GAP}px`;
-		// Bound the modal so a tall one scrolls internally instead of growing
-		// past the keyboard.
-		const max = `${Math.round(vv.height) - GAP * 2}px`;
-		modalEl.style.maxHeight = max;
-		contentEl.style.maxHeight = max;
+		containerEl.style.paddingTop = `calc(${safeTop} + ${GAP}px)`;
+		// Bound the modal to the space left between the status bar and the
+		// keyboard; its flex body then scrolls internally instead of spilling
+		// under the keyboard.
+		modalEl.style.maxHeight = `calc(${h}px - ${safeTop} - ${GAP * 2}px)`;
 	};
 
 	apply();
@@ -53,7 +59,6 @@ export function keepModalAboveKeyboard(
 		containerEl.style.alignItems = "";
 		containerEl.style.paddingTop = "";
 		modalEl.style.maxHeight = "";
-		contentEl.style.maxHeight = "";
 	};
 }
 
