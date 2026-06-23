@@ -52,13 +52,17 @@ export function keepModalAboveKeyboard(
 		// Shrink the (full-screen, flex-centring) container to the usable area
 		// and pin the modal to its top. Horizontal centring, driven by the
 		// container's own `justify-content`, is left intact.
-		containerEl.style.height = `${usable}px`;
-		containerEl.style.top = `${offset}px`;
-		containerEl.style.alignItems = "flex-start";
-		containerEl.style.paddingTop = `calc(${topInset} + ${GAP}px)`;
+		containerEl.setCssStyles({
+			height: `${usable}px`,
+			top: `${offset}px`,
+			alignItems: "flex-start",
+			paddingTop: `calc(${topInset} + ${GAP}px)`,
+		});
 		// Bound the modal to that area; its flex body scrolls internally so the
 		// pinned footer never slides under the keyboard.
-		modalEl.style.maxHeight = `calc(${usable}px - ${topInset} - ${GAP * 2}px)`;
+		modalEl.setCssStyles({
+			maxHeight: `calc(${usable}px - ${topInset} - ${GAP * 2}px)`,
+		});
 	};
 
 	const onKeyboardShow = (e: Event) => {
@@ -89,11 +93,13 @@ export function keepModalAboveKeyboard(
 		window.removeEventListener("keyboardDidShow", onKeyboardShow);
 		window.removeEventListener("keyboardWillHide", onKeyboardHide);
 		window.removeEventListener("keyboardDidHide", onKeyboardHide);
-		containerEl.style.height = "";
-		containerEl.style.top = "";
-		containerEl.style.alignItems = "";
-		containerEl.style.paddingTop = "";
-		modalEl.style.maxHeight = "";
+		containerEl.setCssStyles({
+			height: "",
+			top: "",
+			alignItems: "",
+			paddingTop: "",
+		});
+		modalEl.setCssStyles({ maxHeight: "" });
 	};
 }
 
