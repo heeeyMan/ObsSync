@@ -33,8 +33,12 @@ export function keepModalAboveKeyboard(
 
 	const vv = window.visualViewport;
 	const GAP = 8; // breathing room above/below the modal, in px
-	// Respect the notch/status-bar inset so the title isn't drawn under it.
-	const safeTop = "env(safe-area-inset-top, 0px)";
+	// Clear the system status bar. `env(safe-area-inset-top)` is only non-zero
+	// with `viewport-fit=cover`, which isn't guaranteed here, so fall back to
+	// Obsidian's own safe-area variable and finally a fixed minimum that covers
+	// a typical Android status bar even when both report 0.
+	const topInset =
+		"max(var(--safe-area-inset-top, 0px), env(safe-area-inset-top, 0px), 28px)";
 
 	let keyboardHeight = 0;
 
@@ -51,10 +55,10 @@ export function keepModalAboveKeyboard(
 		containerEl.style.height = `${usable}px`;
 		containerEl.style.top = `${offset}px`;
 		containerEl.style.alignItems = "flex-start";
-		containerEl.style.paddingTop = `calc(${safeTop} + ${GAP}px)`;
+		containerEl.style.paddingTop = `calc(${topInset} + ${GAP}px)`;
 		// Bound the modal to that area; its flex body scrolls internally so the
 		// pinned footer never slides under the keyboard.
-		modalEl.style.maxHeight = `calc(${usable}px - ${safeTop} - ${GAP * 2}px)`;
+		modalEl.style.maxHeight = `calc(${usable}px - ${topInset} - ${GAP * 2}px)`;
 	};
 
 	const onKeyboardShow = (e: Event) => {
