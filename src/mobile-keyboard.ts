@@ -7,14 +7,16 @@ import { Platform } from "obsidian";
  * `vh`, neither of which shrinks when the soft keyboard appears — so a focused
  * field (e.g. the conflict editor's textarea) ends up hidden behind the
  * keyboard. We listen to `visualViewport` (which *does* track the keyboard) and
- * pin the modal to the top of the currently-visible area, bounding its height
- * to what's actually on screen. The inner scroll container plus a
- * `scrollIntoView` on focus then keep the active field reachable.
+ * constrain the modal's *container* to the visible area, aligning the modal to
+ * its top. Crucially we never touch the modal's own horizontal positioning —
+ * Obsidian centres it (and animates it) with its own transform, so overriding
+ * `left`/`transform` would fight that and shove the modal off-screen.
  *
  * Desktop is left completely untouched (no-op). Returns a cleanup function that
  * removes the listeners and restores the inline styles; call it on modal close.
  */
 export function keepModalAboveKeyboard(
+	containerEl: HTMLElement,
 	modalEl: HTMLElement,
 	contentEl: HTMLElement
 ): () => void {
@@ -22,18 +24,21 @@ export function keepModalAboveKeyboard(
 	const vv = window.visualViewport;
 	if (!vv) return () => {};
 
-	const GAP = 8; // breathing room above/below the modal, in px
+	const GAP = 8; // breathing room above the modal, in px
 
 	const apply = () => {
-		// `position: fixed` is relative to the layout viewport, so offset by the
-		// visual viewport's own offset to land at the top of the visible region.
-		modalEl.style.position = "fixed";
-		modalEl.style.top = `${Math.round(vv.offsetTop) + GAP}px`;
-		modalEl.style.left = "50%";
-		modalEl.style.transform = "translateX(-50%)";
-		modalEl.style.margin = "0";
-		modalEl.style.maxHeight = `${Math.round(vv.height) - GAP * 2}px`;
-		contentEl.style.maxHeight = `${Math.round(vv.height) - GAP * 2}px`;
+		// Shrink the (full-screen, flex-centring) container down to just the
+		// visible region and pin the modal to its top. Horizontal centring,
+		// driven by the container's own `justify-content`, is left intact.
+		containerEl.style.height = `${Math.round(vv.height)}px`;
+		containerEl.style.top = `${Math.round(vv.offsetTop)}px`;
+		containerEl.style.alignItems = "flex-start";
+		containerEl.style.paddingTop = `${GAP}px`;
+		// Bound the modal so a tall one scrolls internally instead of growing
+		// past the keyboard.
+		const max = `${Math.round(vv.height) - GAP * 2}px`;
+		modalEl.style.maxHeight = max;
+		contentEl.style.maxHeight = max;
 	};
 
 	apply();
@@ -43,14 +48,12 @@ export function keepModalAboveKeyboard(
 	return () => {
 		vv.removeEventListener("resize", apply);
 		vv.removeEventListener("scroll", apply);
-		for (const el of [modalEl, contentEl]) {
-			el.style.position = "";
-			el.style.top = "";
-			el.style.left = "";
-			el.style.transform = "";
-			el.style.margin = "";
-			el.style.maxHeight = "";
-		}
+		containerEl.style.height = "";
+		containerEl.style.top = "";
+		containerEl.style.alignItems = "";
+		containerEl.style.paddingTop = "";
+		modalEl.style.maxHeight = "";
+		contentEl.style.maxHeight = "";
 	};
 }
 
