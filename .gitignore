@@ -3,3 +3,7 @@ main.js
 *.js.map
 data.json
 .DS_Store
+
+# Local-only AI assistant config / notes (not part of the published plugin)
+.claude/
+CLAUDE.md

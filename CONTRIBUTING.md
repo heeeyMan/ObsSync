@@ -36,10 +36,12 @@ the GitHub Git Data API) over Obsidian's own filesystem and HTTP — never syste
 - `conflict-modal.ts` / `api-conflict-modal.ts` / `review-modal.ts` — the modals.
 - `i18n.ts` — `t(key, vars?)` + the EN/RU string table.
 
-See [`CLAUDE.md`](./CLAUDE.md) for the full architecture, the two-engine design,
-and the non-obvious gotchas (CORS, `statusMatrix` mtime, merge rewriting the
-working tree, no NUL bytes in source). **Read it before changing `git.ts` or
-`github-sync.ts`.**
+The two sync engines (git via isomorphic-git, and the GitHub Git Data API engine
+used on mobile) share the conflict/exclude logic. **Before changing `git.ts` or
+`github-sync.ts`,** watch for the non-obvious gotchas: HTTP must go through
+Obsidian's `requestUrl` (a plain `fetch` is CORS-blocked); `statusMatrix` relies
+on file mtime; `git.merge` rewrites the working tree even on conflict; and source
+must contain no NUL bytes.
 
 ## Conventions
 

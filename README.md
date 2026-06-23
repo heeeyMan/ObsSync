@@ -147,9 +147,12 @@ ln -s "$(pwd)" /path/to/Vault/.obsidian/plugins/git-vault-sync
 
 ## Architecture
 
-See [CLAUDE.md](./CLAUDE.md) for the module map, sync flow, and implementation
-notes (the isomorphic-git filesystem/HTTP adapters, conflict handling, and the
-non-obvious gotchas).
+The whole vault is the working tree (`<vault>/.git`). All Git operations go
+through [isomorphic-git](https://isomorphic-git.org) over Obsidian's own
+filesystem and HTTP, so they work identically on desktop and mobile, with a
+GitHub Git Data API engine as the default on mobile. See `src/` for the module
+layout (the filesystem/HTTP adapters, the two sync engines, and conflict
+handling) and [CONTRIBUTING.md](./CONTRIBUTING.md) for the gotchas.
 
 ## Security
 
