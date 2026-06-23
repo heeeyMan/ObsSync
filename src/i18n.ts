@@ -287,8 +287,8 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 		ru: "По одному шаблону на строку — совпавшие файлы не коммитятся и не считаются (напр. *.tmp, secrets/). * — внутри папки, ** — через папки, / в конце — вся папка.",
 	},
 	setExcludeHint: {
-		en: "These patterns (and the repo's .gitignore) apply on both the Git and GitHub API engines. Note: the GitHub API engine (used on mobile) always skips the whole config folder (.obsidian/) regardless of these patterns — it syncs only your notes, not Obsidian settings.",
-		ru: "Эти шаблоны (и .gitignore репозитория) действуют в обоих движках — Git и GitHub API. Учтите: движок GitHub API (используется на мобильном) всегда пропускает всю папку конфигурации (.obsidian/) независимо от шаблонов — синхронизируются только заметки, а не настройки Obsidian.",
+		en: "These patterns (and the repo's .gitignore) apply on both the Git and GitHub API engines. Note: the GitHub API engine (used on mobile) always skips the whole config folder ({dir}) regardless of these patterns — it syncs only your notes, not Obsidian settings.",
+		ru: "Эти шаблоны (и .gitignore репозитория) действуют в обоих движках — Git и GitHub API. Учтите: движок GitHub API (используется на мобильном) всегда пропускает всю папку конфигурации ({dir}) независимо от шаблонов — синхронизируются только заметки, а не настройки Obsidian.",
 	},
 	headRepo: { en: "Repository", ru: "Репозиторий" },
 	setInitName: { en: "Initialize / link repository", ru: "Инициализировать / привязать репозиторий" },

@@ -352,7 +352,7 @@ export class GitSyncSettingTab extends PluginSettingTab {
 		// Document the engine asymmetry: excludePaths/.gitignore now apply on both
 		// engines, but the API engine (mobile) always skips the whole config dir.
 		const excludeHint = containerEl.createEl("div", {
-			text: t("setExcludeHint"),
+			text: t("setExcludeHint", { dir: this.app.vault.configDir }),
 			cls: "gitsync-setting-hint",
 		});
 		// Sit the hint directly under the exclude textarea.
@@ -594,7 +594,9 @@ export class GitSyncSettingTab extends PluginSettingTab {
 				.addButton((b) => {
 					b.setButtonText(t("branchCreate")).setCta();
 					b.setDisabled(true);
-					createBtnSetDisabled = (d) => b.setDisabled(d);
+					createBtnSetDisabled = (d) => {
+						b.setDisabled(d);
+					};
 					b.onClick(() => void this.confirmCreateBranch(newName, b));
 				})
 				.addExtraButton((b) =>
