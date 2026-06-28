@@ -277,3 +277,29 @@ body.is-mobile .gitsync-review-row input[type="checkbox"] {
 body.is-mobile .gitsync-exclude-textarea {
 	min-height: 120px;
 }
+
+/* --- Tablet settings layout fix ---
+   On Android/iPad tablets Obsidian renders the settings tab in the desktop
+   "split-view" modal, yet the body still carries `is-mobile`, so mobile
+   `.setting-item` rules apply inside a flex container that distributes the
+   modal's free vertical space. Short rows (the token field, the repo dropdown)
+   then float in tall boxes with large gaps, while text-heavy rows look fine.
+   Scoped to tablets only (`is-tablet`) and to our own tab (the class is added
+   in settings.ts) so phone and desktop — which already lay out correctly — and
+   other plugins' settings are left untouched. `display: block` stops the
+   container distributing free vertical space; the per-row resets keep each row
+   at its natural height, top-aligned, instead of growing and centering. */
+body.is-tablet .gitsync-settings {
+	display: block;
+}
+
+body.is-tablet .gitsync-settings .setting-item {
+	flex-grow: 0;
+	flex-shrink: 0;
+	align-items: flex-start;
+}
+
+body.is-tablet .gitsync-settings .setting-item-control {
+	flex-grow: 0;
+	align-self: flex-start;
+}

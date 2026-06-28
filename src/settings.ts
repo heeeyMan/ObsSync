@@ -107,6 +107,12 @@ export class GitSyncSettingTab extends PluginSettingTab {
 
 		const { containerEl } = this;
 		containerEl.empty();
+		// Scope our layout fixes to this tab so they never touch other plugins'
+		// settings. Needed because Obsidian's tablet "split-view" settings render
+		// in a desktop-style modal while the body still carries `is-mobile`, and
+		// the resulting hybrid flex layout stretches short rows (token field, repo
+		// dropdown) with large vertical gaps. See styles.css `.gitsync-settings`.
+		containerEl.addClass("gitsync-settings");
 
 		const s = this.plugin.settings;
 		const hasCreds = !!s.remoteUrl && !!s.token;
