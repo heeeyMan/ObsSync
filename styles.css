@@ -280,26 +280,30 @@ body.is-mobile .gitsync-exclude-textarea {
 
 /* --- Tablet settings layout fix ---
    On Android/iPad tablets Obsidian renders the settings tab in the desktop
-   "split-view" modal, yet the body still carries `is-mobile`, so mobile
-   `.setting-item` rules apply inside a flex container that distributes the
-   modal's free vertical space. Short rows (the token field, the repo dropdown)
-   then float in tall boxes with large gaps, while text-heavy rows look fine.
-   Scoped to tablets only (`is-tablet`) and to our own tab (the class is added
-   in settings.ts) so phone and desktop — which already lay out correctly — and
-   other plugins' settings are left untouched. `display: block` stops the
-   container distributing free vertical space; the per-row resets keep each row
-   at its natural height, top-aligned, instead of growing and centering. */
-body.is-tablet .gitsync-settings {
-	display: block;
+   "split-view" modal while the body still carries `is-mobile`. That keeps
+   `.setting-item` rows in the wide (row) layout, where Obsidian's mobile rule
+   lets the control grow to fill the row. Our token field (`gitsync-token-input`,
+   `flex: 1 1 auto`) then consumes the row and starves the name/description
+   column down to a sliver, so the long token description wraps into a tall
+   vertical strip and balloons that one card's height. Phones don't hit this:
+   the rows already stack (name above control), so the control never competes
+   with the info column.
+
+   Fix: force our settings rows into that same stacked (column) layout — name on
+   top, control full-width below — which is the known-good phone layout. Scoped
+   to `is-mobile` (so it covers the tablet regardless of whether Obsidian sets
+   `is-tablet`, and is a no-op on phones, which already look like this) and to
+   our own tab so other plugins' settings are untouched. */
+body.is-mobile .gitsync-settings .setting-item {
+	flex-direction: column;
+	align-items: stretch;
 }
 
-body.is-tablet .gitsync-settings .setting-item {
-	flex-grow: 0;
-	flex-shrink: 0;
-	align-items: flex-start;
+body.is-mobile .gitsync-settings .setting-item-info {
+	margin-bottom: 8px;
 }
 
-body.is-tablet .gitsync-settings .setting-item-control {
-	flex-grow: 0;
-	align-self: flex-start;
+body.is-mobile .gitsync-settings .setting-item-control {
+	width: 100%;
+	justify-content: flex-start;
 }
