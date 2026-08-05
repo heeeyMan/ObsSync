@@ -1,4 +1,5 @@
 import * as git from "isomorphic-git";
+import diff3Merge from "diff3";
 import { DataAdapter, Platform } from "obsidian";
 import { GitFs } from "./git-fs";
 import { obsidianHttpClient } from "./git-http";
@@ -824,6 +825,10 @@ export class GitManager {
 				ours: branch,
 				theirs: remoteRef,
 				author: this.author(),
+				// Never let the default text driver UTF-8-decode a binary blob
+				// changed on both sides (that silently corrupts PNGs/PDFs/etc.);
+				// binary → conflict, text → identical diff3 behaviour.
+				mergeDriver: binarySafeMergeDriver,
 				// Write non-conflicting merges + conflict markers to the working
 				// tree, then throw so we can resolve interactively.
 				abortOnConflict: false,
@@ -1058,7 +1063,15 @@ export class GitManager {
 			dir: this.dir,
 			filter: (filepath) => !excluded(filepath),
 		});
+		// `git.add` records the file mode from the fs adapter, but Obsidian's vault
+		// adapter can't report a file's executable bit — GitFs always says 100644.
+		// So re-staging a tracked executable would strip its exec bit and push a
+		// pure mode flip (100755→100644), which then flips back on the next sync:
+		// an endless ping-pong (issue: deploy/setup-vps.sh). Snapshot the modes git
+		// already records so we can restore 100755 after staging.
+		const execPaths = await this.trackedExecutablePaths();
 		let changed = 0;
+		const restageExec: string[] = [];
 		for (const [filepath, head, workdir, stage] of matrix) {
 			if (head === 1 && workdir === 1 && stage === 1) continue; // unchanged
 			if (only && !only.has(filepath)) continue;
@@ -1067,10 +1080,77 @@ export class GitManager {
 				await git.remove({ fs: this.fs, dir: this.dir, filepath });
 			} else {
 				await git.add({ fs: this.fs, dir: this.dir, filepath });
+				if (execPaths.has(filepath)) restageExec.push(filepath);
 			}
 			changed++;
 		}
+		await this.restoreExecMode(restageExec);
 		return changed;
+	}
+
+	/**
+	 * Paths git currently records with the executable mode (100755) in HEAD. This
+	 * is the authoritative source for the exec bit: the on-disk file lost it on
+	 * checkout (GitFs writes content, never chmods) and the adapter can't report
+	 * it, so only git's own tree knows. Empty when there are no commits yet.
+	 */
+	private async trackedExecutablePaths(): Promise<Set<string>> {
+		const paths = new Set<string>();
+		let headOid: string;
+		try {
+			headOid = await git.resolveRef({
+				fs: this.fs,
+				dir: this.dir,
+				ref: "HEAD",
+			});
+		} catch {
+			return paths; // unborn branch — nothing tracked yet
+		}
+		await git.walk({
+			fs: this.fs,
+			dir: this.dir,
+			trees: [git.TREE({ ref: headOid })],
+			map: async (filepath, [entry]) => {
+				if (entry && (await entry.mode()) === 0o100755) {
+					paths.add(filepath);
+				}
+				return undefined;
+			},
+		});
+		return paths;
+	}
+
+	/**
+	 * Re-apply the executable mode to just-staged entries whose blob `git.add`
+	 * recorded as 100644 (because our fs adapter can't see the exec bit). Reads
+	 * each path's freshly-staged oid from the index and re-inserts it as 100755,
+	 * so the committed tree keeps the exec bit and no mode-only diff is produced.
+	 */
+	private async restoreExecMode(paths: string[]): Promise<void> {
+		if (paths.length === 0) return;
+		const want = new Set(paths);
+		const oids = new Map<string, string>();
+		await git.walk({
+			fs: this.fs,
+			dir: this.dir,
+			trees: [git.STAGE()],
+			map: async (filepath, [entry]) => {
+				if (entry && want.has(filepath)) {
+					oids.set(filepath, await entry.oid());
+				}
+				return undefined;
+			},
+		});
+		for (const [filepath, oid] of oids) {
+			await git.updateIndex({
+				fs: this.fs,
+				dir: this.dir,
+				filepath,
+				oid,
+				mode: 0o100755,
+				add: true,
+			});
+		}
 	}
 
 	/** Decode a file's content at a given commit; null if absent there. */
@@ -1086,6 +1166,24 @@ export class GitManager {
 		} catch {
 			return null;
 		}
+	}
+
+	/**
+	 * True when a conflicted path is a binary file on either side. The conflict
+	 * UI uses this to skip the (garbled) text preview and disable manual editing,
+	 * so the user resolves a binary conflict by picking a whole side — never by
+	 * saving a UTF-8-decoded string back over the bytes.
+	 */
+	async isConflictBinary(
+		oursOid: string,
+		theirsOid: string,
+		filepath: string
+	): Promise<boolean> {
+		for (const oid of [oursOid, theirsOid]) {
+			const { blob } = await safeReadBlob(this.fs, this.dir, oid, filepath);
+			if (blob !== null && isBinaryBytes(blob)) return true;
+		}
+		return false;
 	}
 
 	/** Current on-disk content (carries conflict markers after a merge). */
@@ -1446,6 +1544,92 @@ function isMissingBaseError(err: unknown): boolean {
 		String(e?.message ?? "")
 	);
 }
+
+/**
+ * True when raw bytes are NOT safe to treat as UTF-8 text: they either fail a
+ * strict decode (an invalid byte sequence — PNG/JPG/PDF headers, etc.) or carry
+ * an embedded NUL (real vault text never does). Anything that fails this must be
+ * written with `writeBinary`/kept as a whole-file conflict — never round-tripped
+ * through a `TextDecoder`/`toString("utf8")`, which replaces every bad byte with
+ * U+FFFD and silently corrupts the file.
+ */
+export function isBinaryBytes(bytes: Uint8Array): boolean {
+	try {
+		const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+		return text.includes("\u0000");
+	} catch {
+		return true;
+	}
+}
+
+/**
+ * True when a string that came out of isomorphic-git's merge machinery must have
+ * been binary. isomorphic-git decodes every blob with
+ * `Buffer.from(bytes).toString("utf8")` BEFORE handing it to the merge driver,
+ * so any byte that wasn't valid UTF-8 is already U+FFFD (the replacement char)
+ * and any NUL survived. Either marker means we must not line-merge it.
+ */
+function decodedLooksBinary(text: string): boolean {
+	return text.includes("\u0000") || text.includes("\uFFFD");
+}
+
+const MERGE_MARKER_SIZE = 7;
+
+/**
+ * Merge driver handed to `git.merge`. isomorphic-git's DEFAULT driver decodes
+ * both sides of every both-sides-modified file as UTF-8, runs a line diff, and
+ * re-encodes — which silently corrupts any binary blob (a PNG's leading `0x89`
+ * becomes `EF BF BD`, the file balloons ~1.8×). We intercept: if any side looks
+ * binary we return `cleanMerge:false` so the file surfaces as a conflict the
+ * user resolves by picking a whole side (`completeMerge` then writes the
+ * ORIGINAL blob bytes, never a decoded string). Text is delegated to `diff3`
+ * — the exact library and version isomorphic-git bundles — so text merges stay
+ * byte-for-byte identical to the stock behaviour (non-overlapping edits to the
+ * same note still auto-merge).
+ *
+ * The driver only ever runs for files changed on BOTH sides; one-sided changes
+ * take the blob oid directly upstream and never reach here.
+ */
+export function binarySafeMergeDriver({
+	branches,
+	contents,
+}: {
+	branches: string[];
+	contents: string[];
+	path: string;
+}): { cleanMerge: boolean; mergedText: string } {
+	if (contents.some(decodedLooksBinary)) {
+		// Force a conflict; mergedText is irrelevant (the user picks a side and
+		// completeMerge re-reads the untouched blob), but return `ours` so the
+		// transient working-tree state is at least the local file.
+		return { cleanMerge: false, mergedText: contents[1] ?? "" };
+	}
+
+	// Text path: replicate isomorphic-git's built-in mergeFile exactly.
+	const ourName = branches[1];
+	const theirName = branches[2];
+	const ours = contents[1].match(LINEBREAKS) ?? [];
+	const base = contents[0].match(LINEBREAKS) ?? [];
+	const theirs = contents[2].match(LINEBREAKS) ?? [];
+	const result = diff3Merge(ours, base, theirs);
+
+	let mergedText = "";
+	let cleanMerge = true;
+	for (const item of result) {
+		if (item.ok) mergedText += item.ok.join("");
+		if (item.conflict) {
+			cleanMerge = false;
+			mergedText += `${"<".repeat(MERGE_MARKER_SIZE)} ${ourName}\n`;
+			mergedText += item.conflict.a.join("");
+			mergedText += `${"=".repeat(MERGE_MARKER_SIZE)}\n`;
+			mergedText += item.conflict.b.join("");
+			mergedText += `${">".repeat(MERGE_MARKER_SIZE)} ${theirName}\n`;
+		}
+	}
+	return { cleanMerge, mergedText };
+}
+
+const LINEBREAKS = /^.*(\r?\n|$)/gm;
 
 /** Extract conflicted file paths from an isomorphic-git merge error, if any. */
 function mergeConflictFiles(err: unknown): string[] | null {

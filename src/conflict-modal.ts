@@ -14,6 +14,8 @@ interface FileState {
 	filepath: string;
 	ours: string | null;
 	theirs: string | null;
+	/** Either side is binary — hides the (garbled) text preview and manual edit. */
+	binary: boolean;
 	choice: Choice;
 	/** Editable content for the "manual" choice (pre-filled with markers). */
 	manual: string;
@@ -67,6 +69,25 @@ export class ConflictModal extends Modal {
 		const loading = body.createEl("p", { text: t("cmLoading") });
 		try {
 			for (const filepath of this.conflict.files) {
+				const binary = await this.git.isConflictBinary(
+					this.conflict.oursOid,
+					this.conflict.theirsOid,
+					filepath
+				);
+				// Binary files must never be edited/previewed as text (that's how
+				// they get corrupted). Skip the decoded reads entirely and default
+				// to keeping the local side; the user picks a whole side instead.
+				if (binary) {
+					this.states.push({
+						filepath,
+						ours: null,
+						theirs: null,
+						binary: true,
+						choice: "local",
+						manual: "",
+					});
+					continue;
+				}
 				const [ours, theirs, working] = await Promise.all([
 					this.git.readVersion(this.conflict.oursOid, filepath),
 					this.git.readVersion(this.conflict.theirsOid, filepath),
@@ -76,6 +97,7 @@ export class ConflictModal extends Modal {
 					filepath,
 					ours,
 					theirs,
+					binary: false,
 					choice: "manual",
 					manual: working,
 				});
@@ -152,8 +174,10 @@ export class ConflictModal extends Modal {
 		new Setting(step)
 			.setName(t("cmResolution"))
 			.addDropdown((dd) => {
-				dd.addOption("manual", t("cmOptManual"))
-					.addOption("local", t("cmOptLocal"))
+				// Manual text editing is unsafe for binary files — offer only the
+				// whole-file choices, which write the original blob bytes verbatim.
+				if (!state.binary) dd.addOption("manual", t("cmOptManual"));
+				dd.addOption("local", t("cmOptLocal"))
 					.addOption("remote", t("cmOptRemote"))
 					.setValue(state.choice)
 					.onChange((v) => {
@@ -166,7 +190,17 @@ export class ConflictModal extends Modal {
 			});
 
 		// Editor sits directly under the resolution dropdown (above the preview).
+		editor.toggleClass("gitsync-hidden", state.choice !== "manual");
 		step.appendChild(editor);
+
+		if (state.binary) {
+			// No text preview for binary — decoding it would show garbage.
+			step.createEl("p", {
+				text: t("cmBinary"),
+				cls: "gitsync-conflict-intro",
+			});
+			return;
+		}
 
 		// Read-only preview of both sides.
 		const details = step.createEl("details");

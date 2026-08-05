@@ -184,6 +184,9 @@ export interface TreeBlobEntry {
 	path: string;
 	sha: string;
 	size: number;
+	/** Git file mode ("100644" | "100755" | …), preserved so pushes don't strip
+	 *  the executable bit off tracked scripts. */
+	mode: string;
 }
 
 /**
@@ -209,12 +212,13 @@ export async function getTree(
 
 	if (Array.isArray(data.tree)) {
 		for (const e of data.tree) {
-			const rec = e as { type?: unknown; path?: unknown; sha?: unknown; size?: unknown };
+			const rec = e as { type?: unknown; path?: unknown; sha?: unknown; size?: unknown; mode?: unknown };
 			if (rec.type !== "blob") continue;
 			entries.push({
 				path: typeof rec.path === "string" ? rec.path : "",
 				sha: typeof rec.sha === "string" ? rec.sha : "",
 				size: typeof rec.size === "number" ? rec.size : 0,
+				mode: typeof rec.mode === "string" ? rec.mode : "100644",
 			});
 		}
 	}
@@ -313,16 +317,16 @@ export interface TreeEntryInput {
 
 /**
  * POST /git/trees — build a new tree on top of `baseTreeSha`. Each entry is a
- * blob: `{ path, mode: "100644", type: "blob", sha }` to add/modify, or
- * `{ path, mode: "100644", type: "blob", sha: null }` to delete the path from
- * the base tree. Returns the new tree sha.
+ * blob: `{ path, mode, type: "blob", sha }` to add/modify, or `{ path, mode,
+ * type: "blob", sha: null }` to delete the path from the base tree. Returns the
+ * new tree sha.
  *
- * LIMITATION (P2-1): entries default to mode `100644` (regular file). The API
- * engine never reads the on-disk executable bit (the Obsidian fs adapter has no
- * portable mode), so syncing an existing `100755` blob through this engine
- * rewrites it to `100644`, dropping the executable bit. This is intentional and
- * harmless for a notes vault (no scripts are run from it); reading real file
- * modes is deliberately not done to keep the per-blob walk cheap on mobile.
+ * Each entry's `mode` defaults to `100644` when the caller doesn't set one. The
+ * Obsidian fs adapter can't read a file's on-disk executable bit, so callers
+ * instead carry the mode git already records for the path (from {@link getTree})
+ * and pass it through here — this preserves a tracked `100755` script across API
+ * pushes. A brand-new path has no prior mode and lands as `100644` (the vault
+ * can't create executables anyway).
  */
 export async function createTree(
 	owner: string,
@@ -571,18 +575,29 @@ export interface ApiSyncResult {
 }
 
 /**
- * Detect whether bytes are "binary" the same way the vault layer does: a NUL
- * byte anywhere means binary. Text is written via `adapter.write` (preserving
- * the platform's string handling); binary via `adapter.writeBinary`.
+ * Strict decoder: throws on any byte sequence that isn't valid UTF-8 (rather
+ * than silently substituting U+FFFD like a lenient `TextDecoder` would).
  */
-function looksBinary(bytes: Uint8Array): boolean {
-	for (let i = 0; i < bytes.length; i++) {
-		if (bytes[i] === 0) return true;
-	}
-	return false;
-}
+const STRICT_TEXT_DECODER = new TextDecoder("utf-8", { fatal: true });
 
-const TEXT_DECODER = new TextDecoder("utf-8");
+/**
+ * Decode bytes to text ONLY when it round-trips losslessly — valid UTF-8 with no
+ * embedded NUL (real vault text never has one). Returns `null` for anything that
+ * must be treated as binary (PNG/JPG/PDF/…), so the caller writes the raw bytes
+ * via `writeBinary` instead of re-encoding a `TextDecoder` string, which would
+ * replace every non-UTF-8 byte with U+FFFD and corrupt the file. This is a strict
+ * superset of the old "NUL byte anywhere" test: it also catches binary formats
+ * that happen to contain no NUL.
+ */
+export function decodeTextOrNull(bytes: Uint8Array): string | null {
+	let text: string;
+	try {
+		text = STRICT_TEXT_DECODER.decode(bytes);
+	} catch {
+		return null;
+	}
+	return text.includes("\u0000") ? null : text;
+}
 
 /**
  * Recursively walk the vault via `adapter.list` (which is per-folder), yielding
@@ -706,9 +721,14 @@ export async function apiSync(opts: {
 	// abort before any diff/delete rather than silently lose data.
 	if (truncated) throw new Error(t("errTreeTruncated"));
 	const remoteShas: Record<string, string> = {};
+	// Remember each tracked path's git mode so re-pushing a changed file keeps its
+	// executable bit (100755) instead of downgrading it to 100644 — otherwise a
+	// mobile push would undo the desktop engine's mode preservation and ping-pong.
+	const remoteModes: Record<string, string> = {};
 	for (const e of entries) {
 		if (!e.path || excluded(e.path)) continue;
 		remoteShas[e.path] = e.sha;
+		remoteModes[e.path] = e.mode;
 	}
 
 	// 2. Local state.
@@ -800,7 +820,9 @@ export async function apiSync(opts: {
 			let bytes: Uint8Array | undefined = new Uint8Array(await adapter.readBinary(p));
 			const sha = await createBlob(owner, repo, token, bytes);
 			bytes = undefined;
-			treeEntries.push({ path: p, sha });
+			// Keep the remote's mode for an existing path (preserves 100755); a
+			// brand-new path has no remote mode → createTree defaults to 100644.
+			treeEntries.push({ path: p, sha, mode: remoteModes[p] });
 			pushCount++;
 			if (onProgress && pushCount % PROGRESS_EVERY === 0) onProgress(t("progPushing"));
 		}
@@ -903,6 +925,15 @@ export async function commitResolutions(opts: {
 		branch,
 		token,
 	);
+	// Remote modes so a resolved script keeps its executable bit on push. A
+	// truncated tree just means some paths fall back to the 100644 default.
+	const remoteModes: Record<string, string> = {};
+	try {
+		const { entries } = await getTree(owner, repo, remoteTree, token);
+		for (const e of entries) if (e.path) remoteModes[e.path] = e.mode;
+	} catch {
+		// Non-fatal: proceed with default modes rather than blocking resolution.
+	}
 
 	// 3. Upload resolved blobs one at a time, then build tree + commit + ref.
 	onProgress?.(t("progPushing"));
@@ -916,7 +947,7 @@ export async function commitResolutions(opts: {
 			let bytes: Uint8Array | undefined = r.content;
 			const sha = await createBlob(owner, repo, token, bytes);
 			bytes = undefined;
-			treeEntries.push({ path: r.path, sha });
+			treeEntries.push({ path: r.path, sha, mode: remoteModes[r.path] });
 			resolvedShas[r.path] = sha;
 		} else {
 			treeEntries.push({ path: r.path, sha: null });
@@ -945,7 +976,7 @@ export async function commitResolutions(opts: {
 }
 
 /** Write bytes to the vault, choosing text vs binary path like git-fs does. */
-async function writeVaultFile(adapter: DataAdapter, path: string, bytes: Uint8Array): Promise<void> {
+export async function writeVaultFile(adapter: DataAdapter, path: string, bytes: Uint8Array): Promise<void> {
 	const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
 	if (dir && !(await adapter.exists(dir))) {
 		// Create the ancestor chain top-down.
@@ -957,9 +988,10 @@ async function writeVaultFile(adapter: DataAdapter, path: string, bytes: Uint8Ar
 			if (!(await adapter.exists(prefix))) await adapter.mkdir(prefix);
 		}
 	}
-	if (looksBinary(bytes)) {
+	const text = decodeTextOrNull(bytes);
+	if (text === null) {
 		await adapter.writeBinary(path, new Uint8Array(bytes).buffer);
 	} else {
-		await adapter.write(path, TEXT_DECODER.decode(bytes));
+		await adapter.write(path, text);
 	}
 }

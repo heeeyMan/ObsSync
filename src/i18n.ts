@@ -343,6 +343,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	cmOptRemote: { en: "Use remote (theirs)", ru: "Версия с сервера" },
 	cmShow: { en: "Show local / remote", ru: "Показать локальную / серверную" },
 	cmDeleted: { en: "(file deleted)", ru: "(файл удалён)" },
+	cmBinary: {
+		en: "Binary file — choose which whole version to keep (no text preview).",
+		ru: "Бинарный файл — выберите, какую версию целиком оставить (без предпросмотра).",
+	},
 	cmResolve: { en: "Resolve & sync", ru: "Разрешить и синхронизировать" },
 	cmSyncing: { en: "Syncing…", ru: "Синхронизация…" },
 	cmCancel: { en: "Cancel (abort merge)", ru: "Отмена (прервать слияние)" },

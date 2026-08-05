@@ -17,15 +17,22 @@ export interface ApiConflictFile {
 type Choice = "local" | "remote" | "manual";
 
 const TEXT_DECODER = new TextDecoder("utf-8");
+const STRICT_TEXT_DECODER = new TextDecoder("utf-8", { fatal: true });
 const TEXT_ENCODER = new TextEncoder();
 
-/** A NUL byte anywhere marks the content as binary (no manual text edit). */
+/**
+ * Content is "binary" (no safe manual text edit) when it isn't lossless UTF-8:
+ * an invalid byte sequence or an embedded NUL. Stricter than a bare NUL scan so
+ * a NUL-free binary (many PNG/JPG payloads) can't be offered for text editing —
+ * saving a decoded string back would replace bad bytes with U+FFFD.
+ */
 function looksBinary(bytes: Uint8Array | null): boolean {
 	if (!bytes) return false;
-	for (let i = 0; i < bytes.length; i++) {
-		if (bytes[i] === 0) return true;
+	try {
+		return STRICT_TEXT_DECODER.decode(bytes).includes("\u0000");
+	} catch {
+		return true;
 	}
-	return false;
 }
 
 interface FileState {

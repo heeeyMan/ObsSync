@@ -7,3 +7,6 @@ data.json
 # Local-only AI assistant config / notes (not part of the published plugin)
 .claude/
 CLAUDE.md
+
+# transient repro bundle (scripts/repro-issue-31.mjs)
+scripts/.repro-engine.mjs
