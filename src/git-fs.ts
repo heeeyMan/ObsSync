@@ -8,8 +8,15 @@ import { DataAdapter } from "obsidian";
  * Paths arrive from isomorphic-git rooted at the configured `dir` ("/"), so we
  * strip the leading slash to get vault-relative paths the adapter understands.
  */
-function err(code: string, message: string): NodeJS.ErrnoException {
-	const e = new Error(message) as NodeJS.ErrnoException;
+/** An Error carrying a POSIX-style `code` (e.g. "ENOENT"), which isomorphic-git
+ *  inspects. Defined locally so it never widens to `any` under the reviewer's
+ *  lint config (which may not resolve Node's `NodeJS.ErrnoException`). */
+interface CodedError extends Error {
+	code: string;
+}
+
+function err(code: string, message: string): CodedError {
+	const e = new Error(message) as CodedError;
 	e.code = code;
 	return e;
 }
