@@ -878,6 +878,20 @@ export class GitManager {
 			}
 			const files = mergeConflictFiles(err);
 			if (files) {
+				// isomorphic-git's conflict-path write-back UTF-8-decodes EVERY
+				// blob of the merged tree back into the working directory (see
+				// mergeTree in its index.js), silently corrupting binary files
+				// anywhere in the vault — even ones unrelated to the conflict.
+				// Our merge driver can't stop it (the write-back runs afterwards
+				// and ignores the driver). Rewrite the non-conflicted binaries
+				// with their true bytes before the resolver stages the tree.
+				await repairConflictBinaries(
+					this.fs,
+					this.dir,
+					localOid,
+					remoteOid,
+					new Set(files)
+				);
 				throw new MergeConflict(
 					files,
 					localOid,
@@ -1630,6 +1644,117 @@ export function binarySafeMergeDriver({
 }
 
 const LINEBREAKS = /^.*(\r?\n|$)/gm;
+
+/**
+ * Repair binary files clobbered by isomorphic-git's conflict-path working-tree
+ * write-back.
+ *
+ * When `git.merge({ abortOnConflict: false })` hits ANY conflict, isomorphic-git
+ * writes the WHOLE merged tree back to the working directory by decoding every
+ * blob as UTF-8 (`new TextDecoder().decode(...)` inside its `mergeTree`). That
+ * lossy round-trip turns a PNG's `0x89` into `EF BF BD` and inflates the file —
+ * corrupting every binary in the vault, even ones with no relation to the
+ * conflict (issue #31 follow-up: "unrelated conflicts break binary files"). The
+ * {@link binarySafeMergeDriver} can't prevent it: the write-back runs after the
+ * merge and ignores the driver entirely.
+ *
+ * We undo it surgically. For each NON-conflicted path we re-derive the blob the
+ * merged tree actually holds via a 3-way comparison over ours/base/theirs, and
+ * if that blob is binary we rewrite it verbatim with `writeBinary`. Conflicted
+ * paths are left alone — {@link GitManager.completeMerge} overwrites those from
+ * the side the user picks (reading the untouched blob by oid), and the conflict
+ * modal treats binary conflicts as whole-file choices. Text files are skipped
+ * because a UTF-8 round-trip of real text is lossless (and may carry the conflict
+ * markers the resolver needs).
+ *
+ * Runs only on the interactive, comparatively rare conflict path, so the extra
+ * tree walk never touches the hot sync path. Exported for the offline repro.
+ */
+export async function repairConflictBinaries(
+	fs: GitFs,
+	dir: string,
+	oursOid: string,
+	theirsOid: string,
+	conflicted: Set<string>
+): Promise<void> {
+	// The merge base lets us tell a one-sided change (take that side) from a
+	// genuine both-sides conflict (already filtered out). On the conflict path
+	// the base is present locally — the merge needed it to detect the conflict —
+	// but degrade gracefully to the unambiguous cases if it can't be resolved.
+	let baseOid: string | undefined;
+	try {
+		const bases = await git.findMergeBase({ fs, dir, oids: [oursOid, theirsOid] });
+		baseOid = bases[0];
+	} catch {
+		baseOid = undefined;
+	}
+
+	await git.walk({
+		fs,
+		dir,
+		trees: [
+			git.TREE({ ref: oursOid }),
+			git.TREE({ ref: baseOid ?? oursOid }),
+			git.TREE({ ref: theirsOid }),
+		],
+		map: async (filepath, [ours, base, theirs]) => {
+			if (conflicted.has(filepath)) return undefined;
+			const ourOid =
+				ours && (await ours.type()) === "blob" ? await ours.oid() : null;
+			const theirOid =
+				theirs && (await theirs.type()) === "blob"
+					? await theirs.oid()
+					: null;
+			const baseBlobOid =
+				baseOid !== undefined && base && (await base.type()) === "blob"
+					? await base.oid()
+					: null;
+			// Without a merge base we can't tell a one-sided add from a one-sided
+			// delete, so treat a present-only file as a keep (degrade safely). On
+			// the real conflict path the base is always present, so this only
+			// affects pathological unrelated-history merges.
+			const noBase = baseOid === undefined;
+
+			// Pick the entry whose blob the merged tree holds for this path.
+			let pick: typeof ours = null;
+			if (ourOid && theirOid) {
+				if (ourOid === theirOid) {
+					pick = ours; // identical on both sides (incl. unchanged)
+				} else if (!noBase) {
+					const ourMod = baseBlobOid !== ourOid;
+					const theirMod = baseBlobOid !== theirOid;
+					if (theirMod && !ourMod) pick = theirs; // only they changed it
+					else if (ourMod && !theirMod) pick = ours; // only we changed it
+					// both changed it differently → a conflict, already filtered.
+				}
+			} else if (theirOid && !ourOid) {
+				// Present only on the remote side. Keep it ONLY when it's a genuine
+				// one-sided ADD (absent from the base). If the base HAS this path,
+				// our side DELETED it (theirs unchanged) — the merged tree drops it,
+				// so resurrecting it would silently revert a legitimate deletion.
+				// (A file theirs modified but we deleted is a delete/modify conflict,
+				// already filtered out.)
+				if (noBase || baseBlobOid === null) pick = theirs;
+			} else if (ourOid && !theirOid) {
+				// Symmetric: keep our present-only file only when it's a one-sided
+				// add. If the base has it, theirs deleted it — we leave our on-disk
+				// copy untouched (it already holds the correct original bytes; the
+				// write-back never rewrote it), rather than risk corrupting it.
+				if (noBase || baseBlobOid === null) pick = ours;
+			}
+			if (!pick) return undefined;
+
+			const content = await pick.content();
+			if (!content) return undefined;
+			const bytes =
+				content instanceof Uint8Array ? content : new Uint8Array(content);
+			if (isBinaryBytes(bytes)) {
+				await fs.writeFile(filepath, bytes);
+			}
+			return undefined;
+		},
+	});
+}
 
 /** Extract conflicted file paths from an isomorphic-git merge error, if any. */
 function mergeConflictFiles(err: unknown): string[] | null {
