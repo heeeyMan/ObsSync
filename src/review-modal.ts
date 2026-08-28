@@ -77,7 +77,11 @@ export class ReviewModal extends Modal {
 				b.setCta().onClick(() => {
 					const paths = [...this.selected];
 					this.close();
-					this.onSync(paths);
+					// Defer so this modal fully tears down before the sync runs —
+					// a sync that hits a conflict opens the ConflictModal, and
+					// opening it while this modal is still closing strands the
+					// backdrop and blanks the UI.
+					activeWindow.setTimeout(() => this.onSync(paths), 0);
 				});
 			})
 			.addButton((b) =>

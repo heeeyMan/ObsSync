@@ -103,20 +103,39 @@ export class ConflictModal extends Modal {
 				});
 			}
 		} catch (err) {
-			loading.setText(t("cmFailed", { msg: (err as Error).message }));
+			// Couldn't read a conflict's sides — we can't resolve it. Close the
+			// modal (which aborts + restores) instead of leaving it open with the
+			// conflict flag stuck, and surface the reason via a Notice.
+			console.error("Git Vault Sync: conflict modal load failed", err);
+			new Notice(t("cmFailed", { msg: (err as Error).message }));
+			this.close();
 			return;
 		}
 		loading.remove();
 
-		for (const state of this.states) {
-			this.renderFile(body, state);
+		// Guard the render phase: an unexpected failure here would otherwise leave
+		// the modal half-built with its backdrop still up — a black screen the user
+		// can't dismiss. On error, close cleanly and surface the reason.
+		try {
+			for (const state of this.states) {
+				this.renderFile(body, state);
+			}
+
+			this.footer = contentEl.createDiv({
+				cls: "gitsync-conflict-footer",
+			});
+			this.showStep(0);
+
+			// Keep the active editor reachable above the on-screen keyboard (mobile).
+			this.cleanupKeyboard = keepModalAboveKeyboard(
+				this.containerEl,
+				modalEl
+			);
+		} catch (err) {
+			console.error("Git Vault Sync: conflict modal render failed", err);
+			new Notice(t("cmFailed", { msg: (err as Error).message }));
+			this.close();
 		}
-
-		this.footer = contentEl.createDiv({ cls: "gitsync-conflict-footer" });
-		this.showStep(0);
-
-		// Keep the active editor reachable above the on-screen keyboard (mobile).
-		this.cleanupKeyboard = keepModalAboveKeyboard(this.containerEl, modalEl);
 	}
 
 	/** Show a single conflict step and rebuild the navigation footer for it. */

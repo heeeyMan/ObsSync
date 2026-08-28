@@ -42,6 +42,9 @@ export default class GitSyncPlugin extends Plugin {
 	/** A conflict surfaced by a silent sync, parked until the user taps to
 	 *  resolve it (we don't auto-open the modal in the background). */
 	private pendingConflict: MergeConflict | null = null;
+	/** Pending deferred {@link openConflictModal} open, so onunload can cancel it
+	 *  and we never open a modal onto an unloaded plugin. */
+	private conflictModalTimer: number | null = null;
 	private autoSyncTimer: number | null = null;
 	private statusRefreshTimer: number | null = null;
 	/** The currently open GitSync modal, so onunload can close it and avoid
@@ -126,6 +129,12 @@ export default class GitSyncPlugin extends Plugin {
 		if (this.autoSyncTimer !== null) window.clearInterval(this.autoSyncTimer);
 		if (this.statusRefreshTimer !== null)
 			window.clearTimeout(this.statusRefreshTimer);
+		// Cancel a deferred conflict-modal open so it can't fire after unload and
+		// operate on a dead GitManager.
+		if (this.conflictModalTimer !== null) {
+			window.clearTimeout(this.conflictModalTimer);
+			this.conflictModalTimer = null;
+		}
 		// Close any open modal so it doesn't keep operating on (and holding a
 		// reference to) the unloaded plugin's GitManager.
 		this.currentModal?.close();
@@ -526,8 +535,40 @@ export default class GitSyncPlugin extends Plugin {
 		// Block auto-sync for the (possibly long) duration of resolution. The
 		// flag is cleared in both modal outcomes below and in onClose.
 		this.conflictActive = true;
-		this.pendingConflict = null;
+		// Keep the conflict PARKED until the modal is actually on screen. The open
+		// is deferred (below), so if the user navigates away — or the deferred open
+		// is cancelled on unload — the status bar still lets them resolve it rather
+		// than losing the conflict.
+		this.pendingConflict = err;
 		this.setStatus("idle");
+
+		// Opening a modal while ANOTHER modal is open or still tearing down strands
+		// that modal's backdrop and blanks the whole workspace — a black screen with
+		// no conflict UI (reported for both the ribbon "Review changes & sync" and
+		// the settings-tab "Sync now", which run the sync while their own modal is
+		// closing / the settings window is still open). So: close the settings tab
+		// if the sync came from it, and open the conflict modal on a later frame,
+		// once any in-flight modal teardown has settled.
+		this.closeSettingsTab();
+		if (this.conflictModalTimer !== null) {
+			window.clearTimeout(this.conflictModalTimer);
+		}
+		// The delay comfortably outlasts Obsidian's modal fade so a just-closed
+		// GitSync modal's backdrop is fully gone before this one opens; the parked
+		// conflict keeps it resolvable from the status bar in the meantime.
+		this.conflictModalTimer = window.setTimeout(() => {
+			this.conflictModalTimer = null;
+			// A concurrent resolve/abort (or unload) may have cleared this meanwhile.
+			if (this.pendingConflict !== err) return;
+			this.pendingConflict = null;
+			this.presentConflictModal(err);
+		}, 200);
+	}
+
+	/** Construct and open the {@link ConflictModal} for `err`. Always called on a
+	 *  clean frame via {@link openConflictModal}, never with another GitSync modal
+	 *  still on screen. */
+	private presentConflictModal(err: MergeConflict) {
 		const modal = new ConflictModal(
 			this.app,
 			this.git,
@@ -560,6 +601,19 @@ export default class GitSyncPlugin extends Plugin {
 			if (this.currentModal === modal) this.currentModal = null;
 		};
 		modal.open();
+	}
+
+	/** Close the settings tab if it's open, so a conflict modal doesn't stack on
+	 *  top of it (which strands the backdrop and blanks the UI). `app.setting` is
+	 *  private but stable; `close()` is a no-op when settings isn't open. */
+	private closeSettingsTab() {
+		try {
+			(
+				this.app as unknown as { setting?: { close?: () => void } }
+			).setting?.close?.();
+		} catch {
+			// Never let a private-API change break conflict handling.
+		}
 	}
 
 	/** Open the modal for a conflict parked by a silent sync (user action). */

@@ -1,0 +1,209 @@
+# Bug History
+
+A running log of reported bugs, their root cause, the fix, and the tests that
+guard against regression. Newest first. Each entry links back to the source
+report (GitHub issue) where one exists.
+
+Status legend: 🟢 fixed · 🟡 in progress · 🔴 open
+
+---
+
+## BUG-001 — Binary files (PNG/JPG/PDF) corrupted during pull/merge
+
+- **Status:** 🟢 fixed in **0.2.15**
+- **Reported:** issue [#31](https://github.com/heeeyMan/ObsSync/issues/31) (`wzhulifantastic`), first release affected `v0.2.14`
+- **Severity:** critical — silent data corruption across devices
+- **Engine:** git (isomorphic-git, desktop) — primary; API (mobile) — secondary write-back path
+
+### Symptoms
+
+- After a pull/merge/conflict-resolution, PNG attachments became unreadable while
+  keeping their original filenames.
+- Signature changed from a valid `89 50 4E 47 0D 0A 1A 0A` to a corrupted
+  `EF BF BD 50 4E 47 0D 0A`.
+- Files grew (~195 KB → ~353 KB, roughly 1.8×).
+- The copy on GitHub stayed valid; restoring from GitHub fixed the file only until
+  the next sync re-corrupted it.
+- Reproduced with **auto-sync and sync-on-startup both disabled** — only the plugin
+  being enabled was enough.
+- Only *some* attachments were hit (the ones changed on both sides).
+
+### Root cause
+
+`EF BF BD` is the UTF-8 encoding of U+FFFD, the Unicode replacement character —
+the tell-tale of a lossy `bytes → UTF-8 string → bytes` round-trip.
+
+- **Git engine:** `git.merge` ran with **no custom merge driver**. isomorphic-git's
+  default driver decodes every blob changed on *both* sides with
+  `Buffer.from(blob).toString("utf8")`, merges the strings, then re-encodes. Every
+  non-UTF-8 byte (like a PNG's `0x89`) is replaced with U+FFFD → `EF BF BD`, which
+  also inflates size. Blobs changed on only *one* side are taken by object id and
+  stay intact — which is exactly why only some attachments were corrupted.
+- **API engine (mobile):** classified write-back content as text/binary with a
+  **NUL-only scan**. A binary file with no `0x00` bytes was misclassified as text
+  and written through the decoding path.
+
+### Fix
+
+- **Binary-safe merge driver** in `git.ts`: if either side of a both-sides change
+  looks binary, the driver raises a **conflict** instead of merging. Resolution
+  picks a whole side and writes the **original blob bytes verbatim** — never a
+  decoded string. Text still merges via the exact `diff3` implementation
+  isomorphic-git bundles, so ordinary note merges are unchanged.
+- **API engine:** write-back is now classified with a **strict UTF-8 decode**
+  (replaces the NUL-only scan, which missed NUL-free binaries); anything that isn't
+  valid UTF-8 is written via `writeBinary`.
+- **Both conflict modals** (`conflict-modal.ts`, `api-conflict-modal.ts`) treat
+  binary files as **whole-file choices** — no garbled text preview and no
+  manual-edit option (manual edit could previously re-save the corrupted content).
+
+### Tests
+
+- Offline regression scenarios in `scripts/regression.mjs`.
+- End-to-end repro `scripts/repro-issue-31.mjs` drives the real engine: the old path
+  corrupts a PNG (16 B → 69 B, `EF BF BD`), the fix keeps both sides byte-for-byte
+  intact with a valid `89 50 4E 47` signature.
+
+### Related fix shipped in the same release
+
+**Executable bit stripped on staging.** `GitFs` can't report a file's mode, so
+`git.add` re-staged tracked `100755` scripts as `100644`, producing an endless
+mode-flip commit ping-pong. `stageAll` now snapshots executable paths from HEAD and
+re-applies `100755` to the freshly-staged blob via `updateIndex`. The API engine
+carries each path's git mode from the remote tree through `createTree` so a mobile
+push no longer downgrades the bit.
+
+---
+
+## BUG-002 — Unrelated conflicts still corrupt binary files
+
+- **Status:** 🟢 fixed in **0.2.17**
+- **Reported:** follow-up on issue [#31](https://github.com/heeeyMan/ObsSync/issues/31) (`wzhulifantastic`, after 0.2.15)
+- **Severity:** critical — same silent binary corruption as BUG-001, different trigger
+- **Engine:** git (isomorphic-git, desktop)
+
+### Symptoms
+
+> After clicking sync in the plugin options page, if there are conflicts — even when
+> the conflicts being resolved are **unrelated** to binary files — the sync process
+> causes **all** binary files in the vault to become corrupted, with the same sudden
+> size increase as BUG-001.
+
+### Root cause (confirmed)
+
+The BUG-001 fix (the binary-safe merge driver) was **not enough**, because the
+corruption on this path doesn't come from the driver at all.
+
+`fetchAndMerge` runs `git.merge({ abortOnConflict: false })` so the working tree
+gets the non-conflicting remote changes plus conflict markers before we resolve
+interactively. But inside isomorphic-git, whenever a merge hits **any** conflict,
+its `mergeTree` writes the **entire merged tree** back to the working directory
+with:
+
+```js
+const content = new TextDecoder().decode(await entry.content());
+await fs.write(path, content, { mode });
+```
+
+(`node_modules/isomorphic-git/index.js`, the `unmergedFiles.length !== 0 && !abortOnConflict`
+branch). That non-fatal `TextDecoder().decode()` runs over **every blob in the tree**
+— not just the conflicted file — so each binary's invalid bytes become U+FFFD
+(`EF BF BD`) and the file inflates. The merge driver never sees this write-back; it
+only governs how both-sides-modified blobs are combined. `completeMerge` then
+`stageAll`s the (now corrupted) working tree and commits it.
+
+That's why a single **text** conflict corrupts every **binary** in the vault, and
+why BUG-001's driver fix didn't cover it: BUG-001's repro merged a binary changed
+on both sides (driver path); this bug's binaries are unchanged or one-sided
+(write-back path).
+
+### Fix
+
+New `repairConflictBinaries` pass in `git.ts`, invoked in `mergeRemote` right after
+a `MergeConflict` is detected and before it's thrown to the resolver. It re-derives
+each **non-conflicted** path's true merged blob via a 3-way walk over
+ours/base/theirs (merge base from `findMergeBase`) and rewrites the binary ones
+verbatim with `writeBinary`:
+
+- unchanged or identical on both sides → that blob;
+- changed on only one side → that side's blob (one-sided edits are preserved);
+- both-sides-different → already a conflict, skipped (`completeMerge` writes the
+  chosen side's original bytes by oid).
+
+Text files are skipped — a UTF-8 round-trip of real text is lossless, and they may
+carry the conflict markers the resolver needs. The pass runs only on the
+interactive conflict path, never on the hot sync path.
+
+### Tests
+
+- `scripts/repro-bug-002.mjs` drives the real engine: a text conflict with an
+  untouched PNG and a remote-only-edited PNG. **Control** proves both binaries are
+  corrupted by the merge write-back (16 B → 24 B, U+FFFD); **fix** proves
+  `repairConflictBinaries` restores both byte-for-byte (untouched → original bytes,
+  remote-only → the remote bytes) while the text conflict markers stay intact.
+- Wired into `npm test` alongside the BUG-001 repro and the regression suite.
+
+---
+
+## BUG-003 — Unresolved conflicts freeze Obsidian (black screen)
+
+- **Status:** 🟢 fixed in **0.2.18** *(UI-layer fix — needs live confirmation in a vault)*
+- **Reported:** follow-up on issue [#31](https://github.com/heeeyMan/ObsSync/issues/31) (`wzhulifantastic`, after 0.2.15)
+- **Severity:** high — UI hang / apparent crash, and a half-completed sync
+- **Engine:** git (isomorphic-git, desktop)
+
+### Symptoms
+
+> When unresolved conflicts exist, clicking **Review Changes & Sync** (bottom-right)
+> freezes the sync and the entire Obsidian interface fails to render — a black
+> screen, though the process is **not** reported as "not responding" in task manager.
+> The sync **commits locally** but does **not** push and does **not** surface the
+> conflicts on GitHub.
+
+### Root cause
+
+Not a hang and not a lost conflict — the engine behaves correctly: `sync()`
+commits locally, then `git.merge` throws `MergeConflict`, which `sync()`'s catch
+routes to `openConflictModal`. The failure is purely in the **UI layer**.
+
+"Review changes & sync" opens the **ReviewModal**; its Sync button called
+`this.close()` and then, **synchronously**, kicked off `sync()`. When that sync
+hits a conflict it opens the **ConflictModal** — but the ReviewModal was still
+tearing down (its `.modal-bg` backdrop fades out over ~200 ms). Opening a second
+modal *while the first is mid-close* makes Obsidian mismanage the shared modal
+backdrop/scope: one backdrop is left stranded over the whole workspace — an
+opaque, un-dismissable overlay that reads as a "black screen" while the app stays
+responsive (hence "not 'not responding'"). The local commit is real; the push
+never happens because the merge genuinely conflicted; and the ConflictModal is
+there but buried under the stuck backdrop, so it "never shows".
+
+Confirmed by contrast with BUG-002, where a conflict raised from the settings-tab
+"Sync now" button opened the ConflictModal fine (no just-closed modal in the way).
+The distinguishing factor for BUG-003 is the freshly-closing ReviewModal.
+
+### Fix
+
+Never open the ConflictModal while another GitSync modal is on screen or mid-close:
+
+- **`main.ts` `openConflictModal`** now closes the settings tab (in case the sync
+  came from "Sync now") and **defers** the actual open by ~200 ms — past Obsidian's
+  modal fade — via `presentConflictModal`. The conflict is **parked**
+  (`pendingConflict`) until it's on screen, so it's never lost and stays resolvable
+  from the status bar; the deferred timer is cancelled in `onunload`.
+- **`review-modal.ts`** defers its `onSync` call (`activeWindow.setTimeout(…, 0)`)
+  so the sync — and any resulting ConflictModal — starts only after the ReviewModal
+  has fully torn down.
+- **`conflict-modal.ts`** wraps its render phase in try/catch: any unexpected
+  render failure now closes the modal and shows a Notice instead of stranding a
+  half-built modal with its backdrop up.
+
+### Tests
+
+UI/modal behavior can't be exercised by the offline Node suite (it needs a live
+Obsidian modal + backdrop). Build is clean and the engine-level suites still pass
+(66 assertions). **Live checklist:** with a divergent local+remote, use the ribbon
+"Review changes & sync", deselect nothing, and confirm the ConflictModal appears
+(no black screen); repeat from the settings-tab "Sync now"; resolve and confirm the
+push completes. Tracked in TESTING.md.
+
+---

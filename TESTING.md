@@ -97,6 +97,13 @@ and mobile items.
 - [ ] **C2 — no lost edits.** Selective sync: select some files, leave edits in
       unselected ones. Drop the network between commit and push. **Expect:** the
       unselected edits are still on disk (not clobbered).
+- [ ] **C4 — conflict modal never black-screens (BUG-003).** With a divergent
+      local+remote (same file changed on both sides), trigger a conflict via the
+      ribbon **"Review changes & sync"** (deselect nothing). **Expect:** the
+      ConflictModal appears — no black screen / stuck backdrop, app stays usable.
+      Repeat from the settings-tab **"Sync now"**. In both, resolve a file and
+      confirm the merge pushes. Then dismiss a ConflictModal with **Esc**: the
+      backdrop clears fully and the vault is left un-merged (aborted).
 
 ### Mobile-specific (high)
 
