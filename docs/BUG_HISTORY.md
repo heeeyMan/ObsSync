@@ -8,6 +8,66 @@ Status legend: 🟢 fixed · 🟡 in progress · 🔴 open
 
 ---
 
+## BUG-006 — CRLF/LF: hundreds of phantom "modified" files on Windows
+
+- **Status:** 🟢 fixed in **0.2.21** *(status/staging logic covered offline; the real Windows checkout needs a live check)*
+- **Reported:** issue [#32](https://github.com/heeeyMan/ObsSync/issues/32) (`wzhulifantastic`), Windows 11, 0.2.16
+- **Severity:** high — ~650 false "changes" on a clean tree; risks users committing/discarding en masse
+- **Engine:** git (isomorphic-git, desktop)
+
+### Symptoms
+
+Git Vault Sync showed ~650 pending changes while Git-for-Windows CLI reported a
+completely clean tree (`git status --porcelain` → 0), with local `HEAD` == `origin/main`.
+Every affected file differed **only** by CRLF vs LF; no content differences. Often
+triggered right after an external `git reset --hard` / `checkout` / fresh clone with
+the system default `core.autocrlf=true`.
+
+### Root cause
+
+`core.autocrlf=true` makes Git-for-Windows check LF-committed text files out with
+CRLF, then compare working files to the index **through its clean filter**
+(`clean(working) == blob`), so it sees no change. isomorphic-git (the plugin's
+desktop engine) has no autocrlf/`.gitattributes` support and compares **raw
+bytes** — a CRLF working file over an LF blob hashes differently, so every text
+file looks modified.
+
+### Fix
+
+Change detection now treats a tracked file that differs from its HEAD blob **only**
+by CRLF↔LF as unchanged, in `countChanges`, `listChanges`, and `stageAll`
+(`isLineEndingOnlyChange` in `git.ts`): it CRLF→LF-normalizes the working bytes
+(`normalizeCrlf`, byte-level) and compares to the HEAD blob; equal ⇒ not a change.
+So the plugin never reports, stages, or commits a pure line-ending flip — it agrees
+with the Git CLI. Properties:
+
+- **Safe cross-platform:** an LF file has no CRLF to strip, so it's a no-op off
+  Windows; the working file is **never** rewritten; only tracked
+  content-modified files (`head===1 && workdir===2`) are checked; adds/deletes and
+  binaries are always real changes.
+- **Cheap on the status timer:** results are cached per path, invalidated on
+  mtime/size/HEAD change, so the whole vault isn't re-hashed every tick.
+- One-directional by design (normalizes the working side only), matching git's
+  "repo stores LF" model. A file *committed* with CRLF that's now LF still shows
+  as a change (correct — never hides a real diff).
+
+Note: an intentional pure line-ending change can no longer be committed via the
+plugin (same as git-with-autocrlf). The reporter's other asks — a Git-for-Windows
+CLI backend, and hard OS-level `.git/index` locking against a concurrently-running
+external git — are larger and tracked separately; the plugin already recovers from
+a corrupt/foreign index via `withIndexRecovery`.
+
+### Tests
+
+`scripts/repro-issue-32.mjs` drives the real engine: a CRLF working file over an LF
+blob is not counted/listed/staged; a genuinely edited (CRLF) file and a changed
+binary still are; and a commit of real edits leaves the CRLF-only file's HEAD blob
+LF (no CRLF written). Wired into `npm test`. **Live checklist:** on Windows with
+`core.autocrlf=true`, a freshly `reset --hard` vault should show 0 changes in the
+plugin (TESTING.md).
+
+---
+
 ## BUG-005 — Obsidian crashes mid-sync on Android (WebView OOM)
 
 - **Status:** 🟡 likely fixed in **0.2.20** — needs confirmation on the affected device

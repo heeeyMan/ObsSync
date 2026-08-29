@@ -148,6 +148,18 @@ export class GitManager {
 	 */
 	private alwaysExclude: string[] = [];
 
+	/**
+	 * Cache of "this working-tree file differs from its HEAD blob ONLY by CRLF↔LF"
+	 * decisions (see {@link isLineEndingOnlyChange}). Keyed by path; a hit is valid
+	 * only while the file's mtime + size AND the HEAD commit are unchanged. Without
+	 * it, the timer-driven status scan would re-read + re-hash every CRLF file on a
+	 * Windows `core.autocrlf=true` checkout on every tick.
+	 */
+	private lineEndingCache = new Map<
+		string,
+		{ mtime: number; size: number; head: string; only: boolean }
+	>();
+
 	constructor(
 		adapter: DataAdapter,
 		private readonly getSettings: () => GitSyncSettings
@@ -363,11 +375,16 @@ export class GitManager {
 			dir: this.dir,
 			filter: (filepath) => !excluded(filepath),
 		});
+		const headOid = await this.tryResolve("HEAD");
 		// [filepath, HEAD, workdir, stage]; unchanged === [1,1,1].
-		return matrix.filter(
-			([, head, workdir, stage]) =>
-				!(head === 1 && workdir === 1 && stage === 1)
-		).length;
+		let n = 0;
+		for (const [filepath, head, workdir, stage] of matrix) {
+			if (head === 1 && workdir === 1 && stage === 1) continue; // unchanged
+			if (await this.isLineEndingOnlyChange(filepath, head, workdir, headOid))
+				continue;
+			n++;
+		}
+		return n;
 	}
 
 	/** List the changes that a sync would commit (excluded paths omitted). */
@@ -379,14 +396,101 @@ export class GitManager {
 			dir: this.dir,
 			filter: (filepath) => !excluded(filepath),
 		});
+		const headOid = await this.tryResolve("HEAD");
 		const out: ChangeEntry[] = [];
 		for (const [filepath, head, workdir, stage] of matrix) {
 			if (head === 1 && workdir === 1 && stage === 1) continue; // unchanged
+			if (await this.isLineEndingOnlyChange(filepath, head, workdir, headOid))
+				continue;
 			const status =
 				head === 0 ? "added" : workdir === 0 ? "deleted" : "modified";
 			out.push({ path: filepath, status });
 		}
 		return out.sort((a, b) => a.path.localeCompare(b.path));
+	}
+
+	/**
+	 * True when a "modified" tracked file differs from its HEAD blob ONLY because
+	 * of CRLF↔LF line endings — a false positive on Windows `core.autocrlf=true`
+	 * checkouts. Git for Windows hides these via its clean filter before comparing;
+	 * isomorphic-git compares raw bytes, so a CRLF working file over an LF blob
+	 * looks modified (issue #32: ~650 phantom changes on a clean tree). We treat it
+	 * as unchanged so the plugin agrees with the Git CLI, never reporting, staging,
+	 * or committing a pure line-ending difference.
+	 *
+	 * Only applies to a tracked, content-modified file (`head === 1`,
+	 * `workdir === 2`); adds/deletes are always real. Safe cross-platform: an LF
+	 * file has no CRLF to strip, so this is a no-op off Windows. Never rewrites the
+	 * working file. Result is cached by mtime/size/HEAD to keep the status timer
+	 * cheap.
+	 */
+	private async isLineEndingOnlyChange(
+		filepath: string,
+		head: number,
+		workdir: number,
+		headOid: string | undefined
+	): Promise<boolean> {
+		if (!headOid || head !== 1 || workdir !== 2) return false;
+		let stat: { mtimeMs: number; size: number };
+		try {
+			stat = await this.fs.stat(filepath);
+		} catch {
+			return false;
+		}
+		const cached = this.lineEndingCache.get(filepath);
+		if (
+			cached &&
+			cached.mtime === stat.mtimeMs &&
+			cached.size === stat.size &&
+			cached.head === headOid
+		) {
+			return cached.only;
+		}
+		const only = await this.computeLineEndingOnly(filepath, headOid);
+		this.lineEndingCache.set(filepath, {
+			mtime: stat.mtimeMs,
+			size: stat.size,
+			head: headOid,
+			only,
+		});
+		return only;
+	}
+
+	/** Do the actual read + CRLF-normalize + compare for {@link isLineEndingOnlyChange}. */
+	private async computeLineEndingOnly(
+		filepath: string,
+		headOid: string
+	): Promise<boolean> {
+		let headBlob: Uint8Array;
+		try {
+			headBlob = (
+				await git.readBlob({
+					fs: this.fs,
+					dir: this.dir,
+					oid: headOid,
+					filepath,
+				})
+			).blob;
+		} catch {
+			return false;
+		}
+		let workBytes: Uint8Array;
+		try {
+			const content = await this.fs.readFile(filepath);
+			workBytes =
+				typeof content === "string"
+					? new TextEncoder().encode(content)
+					: content;
+		} catch {
+			return false;
+		}
+		// Line-ending filters only ever apply to text; a binary file that changed
+		// is a real change.
+		if (isBinaryBytes(workBytes) || isBinaryBytes(headBlob)) return false;
+		const normalized = normalizeCrlf(workBytes);
+		// No CRLF present → the difference (if any) isn't a line-ending artifact.
+		if (normalized === workBytes) return false;
+		return bytesEqual(normalized, headBlob);
 	}
 
 	/**
@@ -1090,12 +1194,17 @@ export class GitManager {
 		// an endless ping-pong (issue: deploy/setup-vps.sh). Snapshot the modes git
 		// already records so we can restore 100755 after staging.
 		const execPaths = await this.trackedExecutablePaths();
+		const headOid = await this.tryResolve("HEAD");
 		let changed = 0;
 		const restageExec: string[] = [];
 		for (const [filepath, head, workdir, stage] of matrix) {
 			if (head === 1 && workdir === 1 && stage === 1) continue; // unchanged
 			if (only && !only.has(filepath)) continue;
 			if (skip && skip.has(filepath)) continue;
+			// A tracked file that differs only by CRLF↔LF (Windows autocrlf) is not a
+			// real change — don't stage/commit a pure line-ending flip (issue #32).
+			if (await this.isLineEndingOnlyChange(filepath, head, workdir, headOid))
+				continue;
 			if (workdir === 0) {
 				await git.remove({ fs: this.fs, dir: this.dir, filepath });
 			} else {
@@ -1597,6 +1706,40 @@ export function isBinaryBytes(bytes: Uint8Array): boolean {
 	} catch {
 		return true;
 	}
+}
+
+/**
+ * Convert CRLF (`0D 0A`) to LF (`0A`) at the byte level — git's `autocrlf`
+ * "clean" filter. Safe on UTF-8 bytes: `0x0D`/`0x0A` never occur as multi-byte
+ * continuation bytes (those are `0x80–0xBF`), so this only ever touches real line
+ * breaks. Returns the SAME array reference when there is no CRLF, so callers can
+ * cheaply detect "nothing to normalize" via identity. Exported for the repro.
+ */
+export function normalizeCrlf(bytes: Uint8Array): Uint8Array {
+	let hasCrlf = false;
+	for (let i = 0; i + 1 < bytes.length; i++) {
+		if (bytes[i] === 0x0d && bytes[i + 1] === 0x0a) {
+			hasCrlf = true;
+			break;
+		}
+	}
+	if (!hasCrlf) return bytes;
+	const out = new Uint8Array(bytes.length);
+	let j = 0;
+	for (let i = 0; i < bytes.length; i++) {
+		// Drop a CR only when it's immediately followed by LF (a CRLF pair); a
+		// lone CR (classic-Mac line break) is left intact, like git.
+		if (bytes[i] === 0x0d && bytes[i + 1] === 0x0a) continue;
+		out[j++] = bytes[i];
+	}
+	return out.subarray(0, j);
+}
+
+/** Byte-for-byte equality of two Uint8Arrays. */
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+	return true;
 }
 
 /**

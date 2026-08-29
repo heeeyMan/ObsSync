@@ -97,6 +97,13 @@ and mobile items.
 - [ ] **C2 — no lost edits.** Selective sync: select some files, leave edits in
       unselected ones. Drop the network between commit and push. **Expect:** the
       unselected edits are still on disk (not clobbered).
+- [ ] **C5 — CRLF/LF no phantom changes on Windows (BUG-006).** On Windows with
+      `git config --global core.autocrlf true`, clone/`reset --hard` a repo whose
+      text blobs are LF so the working tree is checked out as CRLF. **Expect:**
+      Git CLI shows a clean tree AND the plugin shows **0 pending changes** (not
+      hundreds). Then make one real edit → exactly that file is reported; sync and
+      confirm the committed blob stays LF (no CRLF pushed). Also confirm the
+      status bar stays responsive on a large (~800-file) repo.
 - [ ] **C4 — conflict modal never black-screens (BUG-003).** With a divergent
       local+remote (same file changed on both sides), trigger a conflict via the
       ribbon **"Review changes & sync"** (deselect nothing). **Expect:** the
