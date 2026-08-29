@@ -8,6 +8,53 @@ Status legend: 🟢 fixed · 🟡 in progress · 🔴 open
 
 ---
 
+## BUG-005 — Obsidian crashes mid-sync on Android (WebView OOM)
+
+- **Status:** 🟡 likely fixed in **0.2.20** — needs confirmation on the affected device
+- **Reported:** issue [#33](https://github.com/heeeyMan/ObsSync/issues/33) (`sH1222J`)
+- **Severity:** high — hard crash, sync never completes
+- **Engine:** API (GitHub Git Data API — the mobile default)
+
+### Symptoms
+
+On a **Lenovo Legion Y700 (Android 15 / ZUI)**, pressing Sync runs for ~5–10 s
+then Obsidian crashes and closes. The **same repo + vault sync fine on Windows and
+iPhone 17** — so it's device/WebView-specific, not a repo problem.
+
+### Root cause (strong hypothesis — device not reproducible here)
+
+A hard crash that's device-specific after a few seconds of work is the classic
+signature of the **Android WebView (Chromium) renderer hitting its heap cap** —
+which is a fixed per-process limit independent of the device's RAM, and lower /
+more aggressively enforced on some ROMs (ZUI) than on iOS WKWebView.
+
+The API engine's **pull path amplified peak memory per blob**. `getBlob` fetched
+the default JSON form, where the content is base64. For a single large attachment
+that meant holding, at once: the ~1.33× base64 string, a whitespace-stripped copy
+of it (`.replace`), and the `atob` binary string — **~5× the file size** on top of
+the decoded bytes. A few large images in a row could spike past the WebView cap and
+crash the app.
+
+### Fix
+
+`getBlob` now requests the **`application/vnd.github.raw`** media type and reads
+the response's `arrayBuffer` directly — no base64, no JSON parse, no intermediate
+copies, so peak memory per pulled blob drops from ~5× to **~1×** the file size. If
+a proxy ignores the raw type and answers with JSON, it falls back to the base64
+decode (correctness preserved). Verified against the live GitHub API: raw returns
+`content-type: text/plain`/`octet-stream` with the bytes as the body; JSON returns
+`application/json` with base64.
+
+### Tests / status
+
+Build clean; 76 offline assertions pass. The raw media-type behavior was confirmed
+with `curl` against a public repo. The device crash itself can't be reproduced
+here — **awaiting the reporter's confirmation** (and an `adb logcat` if it
+persists, to see whether the remaining pressure is on the push/base64 or the
+local-scan path).
+
+---
+
 ## BUG-004 — Large push fails silently; the real error was unreadable
 
 - **Status:** 🟢 fixed in **0.2.19**

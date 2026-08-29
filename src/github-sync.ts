@@ -1,4 +1,4 @@
-import { requestUrl, DataAdapter } from "obsidian";
+import { requestUrl, RequestUrlResponse, DataAdapter } from "obsidian";
 import { t } from "./i18n";
 
 /**
@@ -47,6 +47,21 @@ function headers(token: string): Record<string, string> {
  * (→ errNetwork). 404 maps to errNotFound so a missing branch/repo is clear.
  */
 async function apiGet(url: string, token: string): Promise<unknown> {
+	return (await apiGetResponse(url, token)).json;
+}
+
+/**
+ * The shared GET transport behind {@link apiGet} and {@link getBlob}: timeout
+ * race + status handling, returning the raw {@link RequestUrlResponse} so the
+ * caller can read `.json` OR `.arrayBuffer` (the blob path wants the raw bytes,
+ * never a parsed+base64-decoded string — see {@link getBlob}). An optional
+ * `accept` overrides the default JSON media type.
+ */
+async function apiGetResponse(
+	url: string,
+	token: string,
+	accept?: string,
+): Promise<RequestUrlResponse> {
 	let timer: number | undefined;
 	const timeout = new Promise<never>((_, reject) => {
 		timer = window.setTimeout(() => {
@@ -54,13 +69,14 @@ async function apiGet(url: string, token: string): Promise<unknown> {
 		}, REQUEST_TIMEOUT_MS);
 	});
 
+	const reqHeaders = accept ? { ...headers(token), Accept: accept } : headers(token);
 	let res;
 	try {
 		res = await Promise.race([
 			requestUrl({
 				url,
 				method: "GET",
-				headers: headers(token),
+				headers: reqHeaders,
 				throw: false,
 			}),
 			timeout,
@@ -86,7 +102,7 @@ async function apiGet(url: string, token: string): Promise<unknown> {
 		throw new Error(t("errNetwork"));
 	}
 
-	return res.json;
+	return res;
 }
 
 /**
@@ -227,10 +243,19 @@ export async function getTree(
 }
 
 /**
- * GET /repos/{owner}/{repo}/git/blobs/{blobSha} — a single blob. GitHub returns
- * the content base64-encoded (`encoding: "base64"`); we decode it to raw bytes.
- * Callers fetch blobs one at a time and drop the reference immediately, so peak
- * memory stays at roughly one blob.
+ * GET /repos/{owner}/{repo}/git/blobs/{blobSha} — a single blob, as RAW bytes.
+ *
+ * We request the `application/vnd.github.raw` media type and read the response's
+ * `arrayBuffer` directly. This is a big memory win on mobile: the default JSON
+ * form returns the content base64-encoded, which forced us to hold, for one
+ * blob, the ~1.33× base64 string, a whitespace-stripped copy of it, and the
+ * `atob` binary string on top of the decoded bytes — ~5× the file size at once.
+ * A large attachment could push that past the Android WebView's heap cap and
+ * crash Obsidian (issue #33). Raw transfer holds ~1× the file size.
+ *
+ * If a server/proxy ignores the raw media type and still answers with JSON, we
+ * fall back to the base64 decode so correctness is preserved. Callers fetch one
+ * blob at a time and drop it immediately, so peak memory stays ~one blob.
  */
 export async function getBlob(
 	owner: string,
@@ -238,20 +263,30 @@ export async function getBlob(
 	blobSha: string,
 	token: string,
 ): Promise<Uint8Array> {
-	const data = (await apiGet(
+	const res = await apiGetResponse(
 		`${API_BASE}/repos/${owner}/${repo}/git/blobs/${blobSha}`,
 		token,
-	)) as { content?: unknown; encoding?: unknown };
+		"application/vnd.github.raw",
+	);
 
-	const encoding = typeof data.encoding === "string" ? data.encoding : "";
-	const content = typeof data.content === "string" ? data.content : "";
+	const contentType = (
+		res.headers?.["content-type"] ??
+		res.headers?.["Content-Type"] ??
+		""
+	).toLowerCase();
 
-	if (encoding !== "base64") {
-		// The blobs endpoint always returns base64 for binary-safe transport.
-		// Anything else means an unexpected/malformed response.
-		throw new Error(t("errNetwork"));
+	// Raw path: the body IS the blob bytes — no base64, no JSON parse.
+	if (!contentType.includes("json")) {
+		return new Uint8Array(res.arrayBuffer);
 	}
 
+	// Fallback: the raw media type wasn't honored — decode the base64 JSON.
+	const data = res.json as { content?: unknown; encoding?: unknown };
+	const encoding = typeof data.encoding === "string" ? data.encoding : "";
+	const content = typeof data.content === "string" ? data.content : "";
+	if (encoding !== "base64") {
+		throw new Error(t("errNetwork"));
+	}
 	return base64ToBytes(content);
 }
 
