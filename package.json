@@ -1,15 +1,16 @@
 {
 	"name": "git-vault-sync",
-	"version": "0.2.18",
+	"version": "0.2.19",
 	"description": "Git Vault Sync — one-click Git sync for Obsidian with conflict resolution (EN/RU).",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"test": "node scripts/regression.mjs && node scripts/repro-issue-31.mjs && node scripts/repro-bug-002.mjs",
+		"test": "node scripts/regression.mjs && node scripts/repro-issue-31.mjs && node scripts/repro-bug-002.mjs && node scripts/repro-bug-002-e2e.mjs",
 		"repro:issue31": "node scripts/repro-issue-31.mjs",
-		"repro:bug2": "node scripts/repro-bug-002.mjs"
+		"repro:bug2": "node scripts/repro-bug-002.mjs",
+		"repro:bug2e2e": "node scripts/repro-bug-002-e2e.mjs"
 	},
 	"keywords": [
 		"obsidian",

@@ -8,5 +8,6 @@ data.json
 .claude/
 CLAUDE.md
 
-# transient repro bundle (scripts/repro-issue-31.mjs)
+# transient repro bundles (esbuild output from the repro scripts)
 scripts/.repro-engine.mjs
+scripts/.repro-*.mjs

@@ -116,6 +116,31 @@
 	display: none;
 }
 
+/* Last-error viewer */
+.gitsync-error-message {
+	font-weight: var(--font-semibold);
+}
+.gitsync-error-when {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	margin-top: 0;
+}
+.gitsync-error-detail {
+	max-height: 300px;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	user-select: text;
+	font-size: var(--font-ui-smaller);
+	background: var(--background-secondary);
+	padding: 8px;
+	border-radius: 6px;
+}
+.gitsync-error-hint {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
 /* Stack a setting's control full-width below its label (used for the
    excluded-files editor, which is awkward in the narrow right column). */
 .gitsync-setting-stacked {

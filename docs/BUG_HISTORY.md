@@ -8,6 +8,60 @@ Status legend: 🟢 fixed · 🟡 in progress · 🔴 open
 
 ---
 
+## BUG-004 — Large push fails silently; the real error was unreadable
+
+- **Status:** 🟢 fixed in **0.2.19**
+- **Reported:** user testing (desktop) — a sync "error" with no visible detail
+- **Severity:** high — sync half-completes (commits locally, never pushes) with a
+  generic/opaque message
+- **Engine:** git (isomorphic-git, desktop)
+
+### Symptoms
+
+A sync committed locally but the **push failed**, leaving the branch ahead of
+`origin`. The Notice showed only a generic message ("check your connection"), so
+the real reason wasn't visible.
+
+### Root cause
+
+Two separate problems:
+
+1. **Oversized push body.** `shouldChunkPush` chunked large pushes on mobile only
+   (`if (!this.shallow) return false`). On desktop a single sync of ~30 MB (here,
+   62 restored attachments) built one packfile and POSTed it through Obsidian's
+   `requestUrl` in one shot, which fails for a large body — so the push errored
+   while the local commit stood.
+2. **The real error was hidden.** `friendlyError` mapped the low-level failure to
+   a generic localized string and **discarded the original**, so neither the
+   Notice nor any log showed the true cause.
+
+> Note: the earlier "images broke on PC" report that led here was **not** a code
+> bug in 0.2.18 — the vault ran a stale **0.2.16 copy** of the plugin (not the
+> symlink), i.e. pre-BUG-002 code. Verified via `scripts/repro-bug-002-e2e.mjs`
+> (full merge→repair→completeMerge preserves binaries). The vault was updated to
+> the fixed build and the corrupted attachments were restored from git history.
+
+### Fix
+
+- **Desktop chunked push.** Removed the desktop guard in `shouldChunkPush`, so a
+  changeset over `PUSH_CHUNK_THRESHOLD` (8 MB) is split into size-bounded commits
+  on **both** platforms — every push body stays small. Small syncs are unchanged.
+- **Preserve the raw error.** `friendlyError` now attaches the original error as
+  `.cause` (the two `errPushRejected` throws too), so the true reason survives.
+- **Error viewer.** A "Show last sync error" command + a status-bar menu item open
+  a copyable dialog (`error-modal.ts`) showing the message, timestamp, and the
+  full `cause` chain + stack (`describeError`). The plugin records the last
+  failure in `lastError`.
+
+### Tests
+
+Build clean; 66 offline assertions still pass. The desktop >8 MB push path and the
+modal are UI/network layers — **live checklist:** stage >8 MB of attachments on
+desktop, confirm multiple size-bounded commits push successfully; trigger any
+sync error and confirm the viewer shows the underlying cause.
+
+---
+
 ## BUG-001 — Binary files (PNG/JPG/PDF) corrupted during pull/merge
 
 - **Status:** 🟢 fixed in **0.2.15**

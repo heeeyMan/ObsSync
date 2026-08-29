@@ -32,6 +32,27 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	menuSyncNow: { en: "Sync now", ru: "Синхронизировать сейчас" },
 	menuTest: { en: "Test connection", ru: "Проверить соединение" },
 	menuSettings: { en: "Open settings", ru: "Открыть настройки" },
+	menuShowError: { en: "Show last error", ru: "Показать последнюю ошибку" },
+
+	// --- last-error viewer ---
+	cmdShowError: {
+		en: "Show last sync error",
+		ru: "Показать последнюю ошибку синхронизации",
+	},
+	errModalTitle: { en: "Last sync error", ru: "Последняя ошибка синхронизации" },
+	errModalWhen: { en: "Occurred: {when}", ru: "Произошла: {when}" },
+	errModalDetail: { en: "Details", ru: "Подробности" },
+	errModalCopy: { en: "Copy details", ru: "Скопировать детали" },
+	errModalCopied: { en: "Error details copied", ru: "Детали ошибки скопированы" },
+	errModalClose: { en: "Close", ru: "Закрыть" },
+	errModalNone: {
+		en: "No sync error has been recorded.",
+		ru: "Ошибок синхронизации не зафиксировано.",
+	},
+	errModalHint: {
+		en: "The full stack is also in the developer console (Ctrl/Cmd+Shift+I).",
+		ru: "Полная трассировка также в консоли разработчика (Ctrl/Cmd+Shift+I).",
+	},
 
 	// --- status bar ---
 	statusSyncing: { en: "syncing…", ru: "синхронизация…" },

@@ -20,6 +20,7 @@ import {
 	parseGitHubRepo,
 } from "./github-sync";
 import { ApiConflictFile, ApiConflictModal } from "./api-conflict-modal";
+import { ErrorDetailModal, SyncErrorInfo } from "./error-modal";
 import { setLanguage, t } from "./i18n";
 
 export default class GitSyncPlugin extends Plugin {
@@ -36,6 +37,9 @@ export default class GitSyncPlugin extends Plugin {
 	private syncing = false;
 	private changeCount = 0;
 	private lastSyncError = false;
+	/** Details of the most recent sync failure, surfaced by the "show last error"
+	 *  command / status-bar menu. Kept until the next failure overwrites it. */
+	private lastError: SyncErrorInfo | null = null;
 	/** True while a ConflictModal is open (or a silent conflict awaits the
 	 *  user). Blocks auto-sync from running over a half-merged tree. */
 	private conflictActive = false;
@@ -105,6 +109,12 @@ export default class GitSyncPlugin extends Plugin {
 			id: "test-connection",
 			name: t("cmdTest"),
 			callback: () => void this.testConnection(),
+		});
+
+		this.addCommand({
+			id: "show-last-error",
+			name: t("cmdShowError"),
+			callback: () => this.showLastError(),
 		});
 
 		this.addSettingTab(new GitSyncSettingTab(this.app, this));
@@ -273,6 +283,13 @@ export default class GitSyncPlugin extends Plugin {
 				}
 			} else {
 				console.error("Git Vault Sync sync failed", err);
+				// Record the failure so the user can inspect the full detail later
+				// (the Notice is transient and shows only the mapped message).
+				this.lastError = {
+					message: (err as Error)?.message ?? String(err),
+					detail: describeError(err),
+					when: Date.now(),
+				};
 				// Silent (auto/startup) sync: stay quiet — a stale token or no
 				// network would otherwise spam a Notice every tick. The sticky
 				// status-bar error indicator (lastSyncError) carries it instead.
@@ -495,6 +512,14 @@ export default class GitSyncPlugin extends Plugin {
 					.onClick(() => this.resolvePendingConflict())
 			);
 		}
+		if (this.lastError) {
+			menu.addItem((i) =>
+				i
+					.setTitle(t("menuShowError"))
+					.setIcon("bug")
+					.onClick(() => this.showLastError())
+			);
+		}
 		menu.addItem((i) =>
 			i
 				.setTitle(t("menuSyncNow"))
@@ -621,6 +646,16 @@ export default class GitSyncPlugin extends Plugin {
 		const err = this.pendingConflict;
 		if (!err) return;
 		this.openConflictModal(err);
+	}
+
+	/** Show the last recorded sync error in a copyable dialog (or a Notice if
+	 *  none). Reachable from the command palette and the status-bar menu. */
+	private showLastError() {
+		if (!this.lastError) {
+			new Notice(t("errModalNone"));
+			return;
+		}
+		new ErrorDetailModal(this.app, this.lastError).open();
 	}
 
 	async testConnection(): Promise<void> {
@@ -838,6 +873,34 @@ export default class GitSyncPlugin extends Plugin {
 }
 
 /** Human-readable "time ago" for the status-bar tooltip. */
+/**
+ * Build the full detail string for a sync failure: walk the error's `cause`
+ * chain (git.ts preserves the raw error under the friendly one) so the true
+ * reason — e.g. a payload-too-large push hidden behind a generic "network"
+ * message — is visible, and append the stack for the top-level error.
+ */
+function describeError(err: unknown): string {
+	const lines: string[] = [];
+	let cur: unknown = err;
+	let depth = 0;
+	while (cur && depth < 6) {
+		const e = cur as {
+			name?: string;
+			code?: string;
+			message?: string;
+			cause?: unknown;
+		};
+		const head = [e.name, e.code].filter(Boolean).join(" ");
+		lines.push(`${head ? `${head}: ` : ""}${e.message ?? String(cur)}`);
+		cur = e.cause;
+		if (cur) lines.push("— caused by —");
+		depth++;
+	}
+	const stack = (err as { stack?: string })?.stack;
+	if (stack) lines.push("", stack);
+	return lines.join("\n");
+}
+
 function formatLastSync(epochMs: number): string {
 	if (!epochMs) return t("lastNever");
 	const secs = Math.floor((Date.now() - epochMs) / 1000);

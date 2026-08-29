@@ -26,15 +26,15 @@ const SHALLOW_FETCH_DEPTH = 1;
 const DEEPEN_FETCH_DEPTH = 50;
 
 /**
- * Total changed-byte budget that triggers the mobile chunked-push path. When a
- * single sync would otherwise stage a very large set of adds/edits, building one
- * packfile for it forces isomorphic-git to buffer every new object in the
- * WebView's heap at once — an OOM risk on mobile. Above this threshold we split
- * the changes into batches of (at most) this many bytes, committing + pushing
- * each batch so only one batch's objects ever live in memory.
- *
- * Desktop never chunks (it has plenty of heap and full history); see
- * {@link GitManager.shouldChunkPush}.
+ * Total changed-byte budget that triggers the chunked-push path (both platforms).
+ * When a single sync would otherwise stage a very large set of adds/edits,
+ * building one packfile for it (a) forces isomorphic-git to buffer every new
+ * object in the WebView's heap at once — an OOM risk on mobile — and (b) produces
+ * one oversized push body that `requestUrl` fails to send (a 30 MB push of
+ * restored attachments silently errored on desktop). Above this threshold we
+ * split the changes into batches of (at most) this many bytes, committing +
+ * pushing each batch so only one batch's objects live in memory and every push
+ * body stays small. See {@link GitManager.shouldChunkPush}.
  */
 const PUSH_CHUNK_THRESHOLD = 8 * 1024 * 1024;
 
@@ -478,12 +478,13 @@ export class GitManager {
 		let caught: Error | undefined;
 		let isConflict = false;
 		try {
-			// On mobile, a very large changeset would build one giant packfile
-			// (OOM risk). When that's the case, hand off to the chunked path,
-			// which pulls first then commits + pushes in size-bounded batches so
-			// only one batch's objects ever live in the WebView heap. Otherwise
-			// run the normal single-commit flow below. shouldChunkPush is false
-			// on desktop and on small changesets, so behavior is unchanged there.
+			// A very large changeset builds one giant packfile — an OOM risk on
+			// mobile and an oversized push body that requestUrl fails to send on
+			// desktop. When that's the case, hand off to the chunked path, which
+			// pulls first then commits + pushes in size-bounded batches so only one
+			// batch's objects live in memory and every push body stays small.
+			// Otherwise run the normal single-commit flow below. shouldChunkPush is
+			// false for small changesets, so behavior is unchanged there.
 			if (await this.shouldChunkPush(only, skip)) {
 				await this.syncChunked(
 					branch,
@@ -546,12 +547,15 @@ export class GitManager {
 	}
 
 	/**
-	 * Decide whether this sync should take the chunked-push path. True only when
-	 * ALL of:
-	 *  - we're on mobile (`this.shallow`) — desktop has heap + full history and
-	 *    always uses the single-commit flow;
+	 * Decide whether this sync should take the chunked-push path. True when BOTH:
 	 *  - the changeset is non-empty (nothing to chunk otherwise);
 	 *  - the total changed-byte size exceeds {@link PUSH_CHUNK_THRESHOLD}.
+	 *
+	 * This now applies on desktop too, not just mobile. Mobile chunks to avoid
+	 * buffering one giant packfile in the WebView heap (OOM); desktop chunks
+	 * because a single large push body through `requestUrl` fails (a 30 MB push of
+	 * restored attachments silently errored — issue #31 follow-up). Splitting into
+	 * size-bounded commits keeps every push body small on both platforms.
 	 *
 	 * Honors `only`/`skip` so the size is measured over exactly the paths the
 	 * normal flow would stage. Deletes contribute ~0 bytes (no new blob), so a
@@ -561,7 +565,6 @@ export class GitManager {
 		only: string[] | undefined,
 		skip: string[]
 	): Promise<boolean> {
-		if (!this.shallow) return false;
 		const changes = await this.stageableChanges(only, skip);
 		if (changes.length === 0) return false;
 		let total = 0;
@@ -573,10 +576,11 @@ export class GitManager {
 	}
 
 	/**
-	 * Chunked-push sync (mobile, large changeset). Pulls the remote FIRST so our
-	 * batch commits land on the current remote tip and each push is a plain
+	 * Chunked-push sync (large changeset, either platform). Pulls the remote FIRST
+	 * so our batch commits land on the current remote tip and each push is a plain
 	 * fast-forward; then commits + pushes the change in size-bounded batches so
-	 * isomorphic-git only ever buffers one batch's objects.
+	 * isomorphic-git only ever buffers one batch's objects and each push body
+	 * stays small.
 	 *
 	 * Ordering rationale: there are no local commits yet when we fetch+merge, so
 	 * a divergent remote simply fast-forwards (no conflict possible from our
@@ -937,7 +941,9 @@ export class GitManager {
 					continue;
 				}
 				if (err instanceof PushRejected) {
-					throw new Error(t("errPushRejected"));
+					throw Object.assign(new Error(t("errPushRejected")), {
+						cause: err,
+					});
 				}
 				throw err;
 			}
@@ -1290,7 +1296,9 @@ export class GitManager {
 			await this.doPush(branch);
 		} catch (err) {
 			if (err instanceof PushRejected) {
-				throw new Error(t("errPushRejected"));
+				throw Object.assign(new Error(t("errPushRejected")), {
+					cause: err,
+				});
 			}
 			throw friendlyError(err);
 		}
@@ -1470,8 +1478,23 @@ class PushRejected extends Error {
 	}
 }
 
-/** Map low-level git/HTTP errors to a clear, actionable message. */
+/**
+ * Map low-level git/HTTP errors to a clear, actionable message while KEEPING the
+ * original error reachable as `.cause`. The mapped text is intentionally generic
+ * (e.g. "check your connection"), which can hide the real reason — the plugin's
+ * "show last error" reads the preserved cause so the raw detail is inspectable.
+ */
 function friendlyError(err: unknown): Error {
+	const mapped = mapFriendlyError(err);
+	if (mapped !== err) {
+		const withCause = mapped as { cause?: unknown };
+		if (withCause.cause === undefined) withCause.cause = err;
+	}
+	return mapped;
+}
+
+/** Map low-level git/HTTP errors to a clear, actionable message. */
+function mapFriendlyError(err: unknown): Error {
 	if (err instanceof MergeConflict) return err;
 	const code = (err as { code?: string })?.code;
 	const msg = String((err as Error)?.message ?? err);
