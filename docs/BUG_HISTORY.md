@@ -70,7 +70,7 @@ plugin (TESTING.md).
 
 ## BUG-005 — Obsidian crashes mid-sync on Android (WebView OOM)
 
-- **Status:** 🟡 likely fixed in **0.2.20** — needs confirmation on the affected device
+- **Status:** 🟡 0.2.20 pull fix was **not enough** (crash persisted on 0.2.21); further peak-memory cuts in **0.2.22** — needs confirmation on the affected device
 - **Reported:** issue [#33](https://github.com/heeeyMan/ObsSync/issues/33) (`sH1222J`)
 - **Severity:** high — hard crash, sync never completes
 - **Engine:** API (GitHub Git Data API — the mobile default)
@@ -105,13 +105,57 @@ decode (correctness preserved). Verified against the live GitHub API: raw return
 `content-type: text/plain`/`octet-stream` with the bytes as the body; JSON returns
 `application/json` with base64.
 
+### Follow-up (0.2.22) — the pull fix wasn't the whole story
+
+The reporter updated to **0.2.21** and it **still crashed, identically** (~5–10 s
+in). That ruled out the pull path as the sole cause and pointed at the two per-file
+memory spikes 0.2.20 never touched — both in `github-sync.ts`:
+
+1. **The local scan (`gitBlobSha` / `scanLocalShas`).** Change detection re-hashes
+   the **whole vault every sync**, and `gitBlobSha` built `payload = header +
+   content`, a full **second copy** of every file → **~2× peak** per file. This is
+   the *only* heavy work on a first sync where the phone's content already matches
+   the remote (nothing to pull or push — just scan-and-diff), so a large attachment
+   hitting 2× is the prime suspect for this reporter's crash.
+2. **The push (`bytesToBase64` / `createBlob`).** Uploading a blob built one binary
+   JS string spanning the file (UTF-16 → ~2×) **and** the base64 string (~2.66×) on
+   top of the raw bytes → **~5× peak** per pushed file.
+
+### Fix (0.2.22)
+
+- **`gitBlobSha`:** files ≤ 2 MiB keep native `crypto.subtle.digest` (fast; the
+  transient 2× on a small file is negligible). Larger files stream a pure-JS SHA-1
+  (`Sha1`) over the content in 1 MiB `subarray` **views** — no second buffer — so
+  the scan holds **~1×** the file size.
+- **`bytesToBase64`:** encodes chunk-by-chunk (chunk = a multiple of 3 bytes, so
+  per-chunk `btoa` output concatenates with no interior padding) instead of
+  building the full binary string first — drops the ~2× intermediate, so the push
+  holds the raw bytes + base64 result only.
+- **`yieldToGc()`:** a `setTimeout(0)` macrotask yield every 25 files in the scan,
+  pull, and both push loops. Awaiting I/O only drains microtasks; a macrotask yield
+  gives V8 a real chance to GC the multi-MB external `ArrayBuffer`s between files, so
+  rapid alloc/free over several seconds doesn't accumulate into an OOM.
+
+### Residual ceiling (be honest)
+
+`requestUrl` on mobile marshals request/response bodies across the Capacitor bridge
+as base64 regardless of what we do in JS, and Obsidian's `readBinary` has no
+streaming/range API — so a **single** very large file (roughly ≥ the WebView's spare
+heap) can still OOM on push or first read; that's the transport/adapter ceiling, not
+something the engine can fully remove. If it still crashes, an `adb logcat` around
+the crash (renderer "Out of memory" / renderer process killed) plus the **largest
+single file size** and whether it's a **first-time pull** would localize the last
+spike.
+
 ### Tests / status
 
-Build clean; 76 offline assertions pass. The raw media-type behavior was confirmed
-with `curl` against a public repo. The device crash itself can't be reproduced
-here — **awaiting the reporter's confirmation** (and an `adb logcat` if it
-persists, to see whether the remaining pressure is on the push/base64 or the
-local-scan path).
+Build clean; offline regression suite green. The new `Sha1` and chunked
+`bytesToBase64` were byte-validated against Node's native `crypto.createHash('sha1')`
+(git-blob form) and `Buffer.toString('base64')` across sizes 0…5 MiB incl. every
+SHA-1 64-byte block boundary and the 2 MiB native/streaming threshold, plus the
+empty-blob known vector `e69de29…`; the 64-bit length field was checked
+analytically for files > 512 MiB (bit-length > 2^32). The device crash still can't
+be reproduced here — **awaiting the reporter's confirmation on 0.2.22**.
 
 ---
 

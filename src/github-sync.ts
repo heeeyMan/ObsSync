@@ -30,6 +30,19 @@ const API_BASE = "https://api.github.com";
 /** Emit a progress message every N processed blobs. */
 const PROGRESS_EVERY = 25;
 
+/**
+ * Yield a macrotask (not just a microtask) back to the event loop. The per-file
+ * loops below read/hash/upload multi-MB buffers back-to-back; awaiting I/O only
+ * drains microtasks, which doesn't give V8 a real chance to run a full GC and
+ * free the external memory backing those `ArrayBuffer`s. On the Android WebView's
+ * fixed heap cap this lag accumulates into an OOM over a few seconds (issue #33).
+ * A brief `setTimeout(0)` every PROGRESS_EVERY files lets the collector catch up
+ * (and keeps the UI responsive) at negligible cost.
+ */
+function yieldToGc(): Promise<void> {
+	return new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
 function headers(token: string): Record<string, string> {
 	return {
 		Authorization: `Bearer ${token}`,
@@ -307,18 +320,30 @@ function base64ToBytes(b64: string): Uint8Array {
 }
 
 /**
- * Encode raw bytes to base64. Mirrors {@link base64ToBytes}; `btoa` needs a
- * binary string (one char per byte), so we build it in chunks to avoid blowing
- * the argument limit of `String.fromCharCode(...)` on large blobs.
+ * Encode raw bytes to base64. `btoa` needs a binary string (one char per byte).
+ *
+ * We encode chunk-by-chunk and concatenate the base64 output, rather than first
+ * building ONE binary string spanning the whole blob and then `btoa`-ing it. On
+ * mobile that intermediate full binary string is a JS (UTF-16) string, i.e. ~2×
+ * the file size, held on top of the raw bytes AND the ~1.33× base64 result — a
+ * peak of ~5× per pushed file that can blow the Android WebView's fixed heap cap
+ * (issue #33). Encoding per chunk keeps only a tiny (~48 KB) binary string live
+ * at a time, so peak drops to the raw bytes plus the base64 result.
+ *
+ * `CHUNK` is a multiple of 3 so each `btoa` call encodes a whole number of 3-byte
+ * groups — no interior `=` padding — which makes simple concatenation of the
+ * per-chunk base64 valid. Only the final (short) chunk may carry real padding.
  */
 function bytesToBase64(bytes: Uint8Array): string {
-	let binary = "";
-	const CHUNK = 0x8000;
+	let out = "";
+	// 3 * 16384 = 49152: a multiple of 3, and small enough that
+	// String.fromCharCode.apply stays under the arguments-length limit.
+	const CHUNK = 3 * 16384;
 	for (let i = 0; i < bytes.length; i += CHUNK) {
 		const sub = bytes.subarray(i, i + CHUNK);
-		binary += String.fromCharCode.apply(null, sub as unknown as number[]);
+		out += btoa(String.fromCharCode.apply(null, sub as unknown as number[]));
 	}
-	return btoa(binary);
+	return out;
 }
 
 /**
@@ -521,21 +546,141 @@ function refAlreadyExists(res: { json?: unknown; text?: string }): boolean {
 }
 
 /**
+ * Files at or below this size are hashed with native Web Crypto; larger ones use
+ * the streaming JS SHA-1 below. The native path is much faster but needs the
+ * header+content in ONE contiguous buffer — a full second copy of the file. For
+ * a big attachment that transient 2× peak, over the whole-vault scan every sync,
+ * is a real OOM risk on the Android WebView's fixed heap (issue #33), so above
+ * this threshold we trade a little CPU to keep peak memory at ~1× the file.
+ */
+const NATIVE_HASH_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
  * Compute a Git blob object id: SHA-1 of the bytes
  * `"blob " + <byteLength> + "\0"` followed by the content. This matches
  * `git hash-object` and the `sha` GitHub reports in a tree, so it lets us
  * compare a local file against a remote blob without a network round-trip.
  *
- * Uses Web Crypto (`crypto.subtle.digest("SHA-1", …)`), available in Obsidian.
+ * Small files use native Web Crypto (`crypto.subtle.digest`). Large files stream
+ * a pure-JS SHA-1 over the content in place (64-byte-aligned chunks, via
+ * `subarray` views — no copy), so we never hold the second full-size buffer the
+ * native path's concat would require. See {@link NATIVE_HASH_MAX_BYTES}.
  */
 export async function gitBlobSha(content: Uint8Array): Promise<string> {
 	const header = new TextEncoder().encode(`blob ${content.length}\0`);
-	const payload = new Uint8Array(header.length + content.length);
-	payload.set(header, 0);
-	payload.set(content, header.length);
 
-	const digest = await crypto.subtle.digest("SHA-1", payload);
-	return bytesToHex(new Uint8Array(digest));
+	if (content.length <= NATIVE_HASH_MAX_BYTES) {
+		const payload = new Uint8Array(header.length + content.length);
+		payload.set(header, 0);
+		payload.set(content, header.length);
+		const digest = await crypto.subtle.digest("SHA-1", payload);
+		return bytesToHex(new Uint8Array(digest));
+	}
+
+	const sha = new Sha1();
+	sha.update(header);
+	// 1 MiB, a multiple of SHA-1's 64-byte block so update() never has to buffer
+	// a partial block between chunks. subarray() is a view, so no bytes are copied.
+	const CHUNK = 1 << 20;
+	for (let i = 0; i < content.length; i += CHUNK) {
+		sha.update(content.subarray(i, i + CHUNK));
+	}
+	return sha.hex();
+}
+
+/**
+ * Minimal streaming SHA-1 (FIPS 180-1). Exists so {@link gitBlobSha} can hash a
+ * large file without allocating a second full-size buffer that the native
+ * `crypto.subtle.digest` (single contiguous input) would force — the peak that
+ * OOMs the mobile WebView on big attachments (issue #33). Only used above
+ * {@link NATIVE_HASH_MAX_BYTES}; small files stay on the faster native path.
+ *
+ * Feed bytes with {@link update} (any number of calls, any sizes) then read the
+ * lowercase hex digest once with {@link hex}. Not reusable after `hex()`.
+ */
+class Sha1 {
+	private h0 = 0x67452301;
+	private h1 = 0xefcdab89;
+	private h2 = 0x98badcfe;
+	private h3 = 0x10325476;
+	private h4 = 0xc3d2e1f0;
+	/** Partial 64-byte block awaiting more bytes. */
+	private readonly block = new Uint8Array(64);
+	private blockLen = 0;
+	/** Total bytes fed, for the 64-bit length suffix in the padding. */
+	private totalLen = 0;
+	private readonly w = new Uint32Array(80);
+
+	update(bytes: Uint8Array): void {
+		this.totalLen += bytes.length;
+		let offset = 0;
+		// Top off a pending partial block first.
+		if (this.blockLen > 0) {
+			while (offset < bytes.length && this.blockLen < 64) {
+				this.block[this.blockLen++] = bytes[offset++];
+			}
+			if (this.blockLen === 64) {
+				this.process(this.block, 0);
+				this.blockLen = 0;
+			}
+		}
+		// Process full 64-byte blocks straight from the input (no copy).
+		while (bytes.length - offset >= 64) {
+			this.process(bytes, offset);
+			offset += 64;
+		}
+		// Stash the remainder.
+		while (offset < bytes.length) {
+			this.block[this.blockLen++] = bytes[offset++];
+		}
+	}
+
+	hex(): string {
+		// Pad: 0x80, zeros, then the 64-bit big-endian bit length.
+		const bitLenHi = Math.floor(this.totalLen / 0x20000000); // (len * 8) >>> 32
+		const bitLenLo = (this.totalLen * 8) >>> 0;
+		const pad: number[] = [0x80];
+		// Grow to a length that leaves room for the 8-byte length in the last block.
+		while ((this.totalLen + pad.length) % 64 !== 56) pad.push(0);
+		pad.push((bitLenHi >>> 24) & 0xff, (bitLenHi >>> 16) & 0xff, (bitLenHi >>> 8) & 0xff, bitLenHi & 0xff);
+		pad.push((bitLenLo >>> 24) & 0xff, (bitLenLo >>> 16) & 0xff, (bitLenLo >>> 8) & 0xff, bitLenLo & 0xff);
+		this.update(new Uint8Array(pad));
+
+		const out = [this.h0, this.h1, this.h2, this.h3, this.h4];
+		let hex = "";
+		for (const v of out) hex += (v >>> 0).toString(16).padStart(8, "0");
+		return hex;
+	}
+
+	private process(data: Uint8Array, off: number): void {
+		const w = this.w;
+		for (let i = 0; i < 16; i++) {
+			w[i] =
+				(data[off + i * 4] << 24) |
+				(data[off + i * 4 + 1] << 16) |
+				(data[off + i * 4 + 2] << 8) |
+				data[off + i * 4 + 3];
+		}
+		for (let i = 16; i < 80; i++) {
+			const n = w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16];
+			w[i] = (n << 1) | (n >>> 31);
+		}
+		let a = this.h0, b = this.h1, c = this.h2, d = this.h3, e = this.h4;
+		for (let i = 0; i < 80; i++) {
+			let f: number, k: number;
+			if (i < 20) { f = (b & c) | (~b & d); k = 0x5a827999; }
+			else if (i < 40) { f = b ^ c ^ d; k = 0x6ed9eba1; }
+			else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8f1bbcdc; }
+			else { f = b ^ c ^ d; k = 0xca62c1d6; }
+			const tmp = (((a << 5) | (a >>> 27)) + f + e + k + w[i]) | 0;
+			e = d; d = c; c = (b << 30) | (b >>> 2); b = a; a = tmp;
+		}
+		this.h0 = (this.h0 + a) | 0;
+		this.h1 = (this.h1 + b) | 0;
+		this.h2 = (this.h2 + c) | 0;
+		this.h3 = (this.h3 + d) | 0;
+		this.h4 = (this.h4 + e) | 0;
+	}
 }
 
 function bytesToHex(bytes: Uint8Array): string {
@@ -681,8 +826,9 @@ async function scanLocalShas(
 		shas[p] = await gitBlobSha(bytes);
 		bytes = undefined;
 		i++;
-		if (onProgress && i % PROGRESS_EVERY === 0) {
-			onProgress(t("progScanning"));
+		if (i % PROGRESS_EVERY === 0) {
+			onProgress?.(t("progScanning"));
+			await yieldToGc();
 		}
 	}
 	return shas;
@@ -830,7 +976,10 @@ export async function apiSync(opts: {
 		bytes = undefined;
 		result.pulled.push(p);
 		pullCount++;
-		if (onProgress && pullCount % PROGRESS_EVERY === 0) onProgress(t("progMerging"));
+		if (pullCount % PROGRESS_EVERY === 0) {
+			onProgress?.(t("progMerging"));
+			await yieldToGc();
+		}
 	}
 	for (const p of toDeleteLocal) {
 		if (await adapter.exists(p)) await adapter.remove(p);
@@ -859,7 +1008,10 @@ export async function apiSync(opts: {
 			// brand-new path has no remote mode → createTree defaults to 100644.
 			treeEntries.push({ path: p, sha, mode: remoteModes[p] });
 			pushCount++;
-			if (onProgress && pushCount % PROGRESS_EVERY === 0) onProgress(t("progPushing"));
+			if (pushCount % PROGRESS_EVERY === 0) {
+				onProgress?.(t("progPushing"));
+				await yieldToGc();
+			}
 		}
 		for (const p of realDeleteRemote) {
 			treeEntries.push({ path: p, sha: null });
@@ -988,7 +1140,10 @@ export async function commitResolutions(opts: {
 			treeEntries.push({ path: r.path, sha: null });
 		}
 		pushCount++;
-		if (onProgress && pushCount % PROGRESS_EVERY === 0) onProgress(t("progPushing"));
+		if (pushCount % PROGRESS_EVERY === 0) {
+			onProgress?.(t("progPushing"));
+			await yieldToGc();
+		}
 	}
 
 	const newTree = await createTree(owner, repo, token, remoteTree, treeEntries);
