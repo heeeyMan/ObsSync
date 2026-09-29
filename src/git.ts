@@ -1635,8 +1635,13 @@ function mapFriendlyError(err: unknown): Error {
 	) {
 		return new Error(t("errAuth"));
 	}
+	// A capped request (git-http.ts) is a timeout, not a bad URL. Checked
+	// before the generic network pattern, which also matches "timeout".
+	if (/ERR_TIMEOUT|\bETIMEDOUT\b|timed? ?out/i.test(msg)) {
+		return new Error(t("errTimeout"));
+	}
 	if (
-		/network|fetch failed|Failed to fetch|ENOTFOUND|getaddrinfo|ECONNRESET|ETIMEDOUT|ERR_|socket|aborted|timed? ?out|timeout/i.test(
+		/network|fetch failed|Failed to fetch|ENOTFOUND|getaddrinfo|ECONNRESET|ERR_|socket|aborted/i.test(
 			msg
 		) ||
 		/^ERR_/.test(code ?? "")

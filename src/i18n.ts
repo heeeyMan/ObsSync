@@ -157,6 +157,10 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 		en: "Network error — check your connection and the remote URL.",
 		ru: "Сетевая ошибка — проверьте подключение и URL репозитория.",
 	},
+	errTimeout: {
+		en: "The remote didn't respond in time. Check your connection — syncing a large repository can take several minutes.",
+		ru: "Сервер не ответил вовремя. Проверьте подключение — синхронизация большого репозитория может занять несколько минут.",
+	},
 	errBadToken: {
 		en: "Invalid or expired token.",
 		ru: "Неверный или просроченный токен.",

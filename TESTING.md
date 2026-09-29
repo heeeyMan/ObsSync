@@ -91,9 +91,10 @@ and mobile items.
       opens. Wait past the interval without closing it. **Expect:** auto-sync
       does not start over the half-merged tree; no new commit appears.
 - [ ] **H1 — network timeout.** Start a sync and kill Wi-Fi/network mid-push (or
-      throttle in dev-tools). **Expect:** within ~60s the sync fails with a
-      network error and the status bar leaves "syncing" — it never hangs
-      forever.
+      throttle in dev-tools). **Expect:** a stalled info/refs GET fails within
+      ~60s; a stalled pack POST (upload-pack / receive-pack) fails within ~5 min.
+      Either way the status bar leaves "syncing" — it never hangs forever. The
+      message is the timeout error, and "show last error" names the method and URL.
 - [ ] **C2 — no lost edits.** Selective sync: select some files, leave edits in
       unselected ones. Drop the network between commit and push. **Expect:** the
       unselected edits are still on disk (not clobbered).
