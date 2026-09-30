@@ -1,12 +1,21 @@
-import { requestUrl } from "obsidian";
+import { Platform, requestUrl } from "obsidian";
 import type { HttpClient, GitHttpRequest, GitHttpResponse } from "isomorphic-git";
 
 /**
- * HTTP client for isomorphic-git built on Obsidian's {@link requestUrl}.
+ * HTTP client for isomorphic-git.
  *
  * A plain `fetch` is blocked by CORS inside Obsidian (the request originates
- * from `app://obsidian.md`), whereas `requestUrl` is proxied through the native
- * layer (Electron on desktop, Capacitor on mobile) and is not subject to CORS.
+ * from `app://obsidian.md`).
+ *
+ * Desktop uses Node's `http`/`https`. GitHub's git HTTP backend does not
+ * answer a POST until it has `Content-Length`, and it never replies to a
+ * chunked body — sync then sits until our timeout. Electron's `net.request`
+ * (what Obsidian's `requestUrl` uses on desktop) rejects a manual
+ * `Content-Length` with `net::ERR_INVALID_ARGUMENT` and does not add one
+ * itself. Node's client accepts the header and frames the body.
+ *
+ * Mobile has no Node builtins, so it stays on `requestUrl` (Capacitor) and
+ * does send `Content-Length`. That path is not the desktop Electron stack.
  */
 
 /**
@@ -67,6 +76,52 @@ function headerValue(
 	return undefined;
 }
 
+/**
+ * Headers we never forward from the caller. `Host` and `Transfer-Encoding`
+ * make Electron's `net.request` fail with `net::ERR_INVALID_ARGUMENT`. A
+ * caller-supplied `Content-Length` is dropped too, then replaced (when
+ * `contentLength` is passed) with the length of the buffer we actually send.
+ */
+const STRIPPED_REQUEST_HEADERS = new Set([
+	"content-length",
+	"host",
+	"trailer",
+	"te",
+	"upgrade",
+	"cookie2",
+	"keep-alive",
+	"transfer-encoding",
+]);
+
+/**
+ * Copy isomorphic-git's headers into a fresh object.
+ *
+ * The copy matters: isomorphic-git reuses and mutates the same header object
+ * across the discover GET and the pack POST.
+ *
+ * Pass `contentLength` whenever a body is sent. GitHub waits forever on a
+ * git smart-HTTP POST that has no `Content-Length`.
+ *
+ * Exported for the offline check in `scripts/git-http-url.mjs`.
+ */
+export function prepareGitHttpHeaders(
+	headers: Record<string, string>,
+	options: { contentLength?: number } = {}
+): Record<string, string> {
+	const headersOut: Record<string, string> = {};
+	for (const [key, value] of Object.entries(headers)) {
+		if (STRIPPED_REQUEST_HEADERS.has(key.toLowerCase())) continue;
+		headersOut[key] = value;
+	}
+	if (!headerValue(headersOut, "user-agent")) {
+		headersOut["User-Agent"] = "git/obsidian-git-vault-sync";
+	}
+	if (options.contentLength !== undefined) {
+		headersOut["Content-Length"] = String(options.contentLength);
+	}
+	return headersOut;
+}
+
 /** URL safe to put in an error string: no userinfo, in case a token was embedded. */
 function redactUrl(url: string): string {
 	try {
@@ -106,6 +161,238 @@ async function collectBody(
 	return merged.buffer.slice(0, merged.byteLength);
 }
 
+/** Node's `http`/`https` `request`, the only surface the desktop path needs. */
+interface NodeClientRequest {
+	write(chunk: Uint8Array): void;
+	end(): void;
+	destroy(err?: Error): void;
+	on(event: "error", cb: (err: Error) => void): void;
+}
+
+interface NodeIncomingMessage {
+	statusCode?: number;
+	statusMessage?: string;
+	headers: Record<string, string | string[] | undefined>;
+	resume(): void;
+	on(event: "data", cb: (chunk: Uint8Array) => void): void;
+	on(event: "end", cb: () => void): void;
+	on(event: "error", cb: (err: Error) => void): void;
+}
+
+interface NodeHttpLike {
+	request(
+		url: string,
+		options: { method: string; headers: Record<string, string> },
+		cb: (res: NodeIncomingMessage) => void
+	): NodeClientRequest;
+}
+
+declare function require(module: string): NodeHttpLike;
+
+const MAX_REDIRECTS = 5;
+
+export interface NodeGitHttpResult {
+	url: string;
+	statusCode: number;
+	statusMessage: string;
+	headers: Record<string, string>;
+	body: Uint8Array;
+}
+
+/**
+ * Desktop git HTTP. Sets `Content-Length` from the buffered body and follows
+ * redirects without turning a POST into a GET — GitHub's `.git` 301 is a POST,
+ * and dropping the body would make the next hop hang the same way.
+ *
+ * `require("http")` / `require("https")` stay inside this function so the
+ * mobile bundle does not touch Node builtins at load time.
+ *
+ * Exported for the local-server check in `scripts/git-http-url.mjs`.
+ */
+export function nodeGitHttpRequest(options: {
+	url: string;
+	method: string;
+	headers: Record<string, string>;
+	body?: ArrayBuffer;
+	timeoutMs: number;
+	deadline?: number;
+	hop?: number;
+}): Promise<NodeGitHttpResult> {
+	const deadline = options.deadline ?? Date.now() + options.timeoutMs;
+	const hop = options.hop ?? 0;
+	const { url, method } = options;
+	const body = options.body;
+	const headers: Record<string, string> = { ...options.headers };
+	if (body) {
+		for (const key of Object.keys(headers)) {
+			const lower = key.toLowerCase();
+			if (lower === "content-length" || lower === "transfer-encoding") {
+				delete headers[key];
+			}
+		}
+		headers["Content-Length"] = String(body.byteLength);
+	}
+
+	return new Promise((resolve, reject) => {
+		let settled = false;
+		let handedOff = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const finish = (err: Error | null, value?: NodeGitHttpResult) => {
+			if (settled) return;
+			settled = true;
+			if (timer !== undefined) clearTimeout(timer);
+			if (err) reject(err);
+			else resolve(value as NodeGitHttpResult);
+		};
+		const fail = (err: Error) => {
+			const msg = err.message || String(err);
+			if (/ERR_TIMEOUT/i.test(msg)) finish(err);
+			else finish(new Error(`ERR_NETWORK: ${msg}`));
+		};
+
+		let parsed: URL;
+		try {
+			parsed = new URL(url);
+		} catch (err) {
+			fail(err instanceof Error ? err : new Error(String(err)));
+			return;
+		}
+		let mod: NodeHttpLike;
+		try {
+			mod = parsed.protocol === "http:" ? require("http") : require("https");
+		} catch (err) {
+			fail(err instanceof Error ? err : new Error(String(err)));
+			return;
+		}
+		const remaining = deadline - Date.now();
+		if (remaining <= 0) {
+			fail(
+				new Error(
+					`ERR_TIMEOUT: ${method} ${redactUrl(url)} timed out after ${options.timeoutMs}ms`
+				)
+			);
+			return;
+		}
+
+		const req = mod.request(url, { method, headers }, (res) => {
+			const statusCode = res.statusCode ?? 0;
+			const location = headerListValue(res.headers.location);
+			if (
+				location &&
+				hop < MAX_REDIRECTS &&
+				(statusCode === 301 ||
+					statusCode === 302 ||
+					statusCode === 307 ||
+					statusCode === 308)
+			) {
+				handedOff = true;
+				if (timer !== undefined) clearTimeout(timer);
+				res.resume();
+				let nextUrl: string;
+				try {
+					nextUrl = new URL(location, url).toString();
+				} catch (err) {
+					fail(err instanceof Error ? err : new Error(String(err)));
+					return;
+				}
+				nodeGitHttpRequest({
+					url: nextUrl,
+					method,
+					headers: headersForRedirect(headers, url, nextUrl),
+					body,
+					timeoutMs: options.timeoutMs,
+					deadline,
+					hop: hop + 1,
+				}).then(
+					(value) => finish(null, value),
+					(err) => fail(err instanceof Error ? err : new Error(String(err)))
+				);
+				return;
+			}
+
+			const chunks: Uint8Array[] = [];
+			res.on("data", (chunk) => chunks.push(chunk));
+			res.on("error", (err) => fail(err));
+			res.on("end", () => {
+				finish(null, {
+					url,
+					statusCode,
+					statusMessage: res.statusMessage || String(statusCode),
+					headers: flattenNodeHeaders(res.headers),
+					body: concatBytes(chunks),
+				});
+			});
+		});
+
+		timer = setTimeout(() => {
+			req.destroy(
+				new Error(
+					`ERR_TIMEOUT: ${method} ${redactUrl(url)} timed out after ${options.timeoutMs}ms`
+				)
+			);
+		}, remaining);
+
+		req.on("error", (err) => {
+			if (!handedOff) fail(err);
+		});
+		if (body) req.write(new Uint8Array(body));
+		req.end();
+	});
+}
+
+function headerListValue(
+	value: string | string[] | undefined
+): string | undefined {
+	if (Array.isArray(value)) return value[0];
+	return value;
+}
+
+function flattenNodeHeaders(
+	raw: Record<string, string | string[] | undefined>
+): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const [key, value] of Object.entries(raw)) {
+		if (value === undefined) continue;
+		out[key] = Array.isArray(value) ? value.join(", ") : value;
+	}
+	return out;
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+	let total = 0;
+	for (const c of chunks) total += c.byteLength;
+	const out = new Uint8Array(total);
+	let offset = 0;
+	for (const c of chunks) {
+		out.set(c, offset);
+		offset += c.byteLength;
+	}
+	return out;
+}
+
+/** Drop credentials when a redirect leaves the host that issued them. */
+function headersForRedirect(
+	headers: Record<string, string>,
+	from: string,
+	to: string
+): Record<string, string> {
+	let fromHost = "";
+	let toHost = "";
+	try {
+		fromHost = new URL(from).hostname;
+		toHost = new URL(to).hostname;
+	} catch {
+		return headers;
+	}
+	if (fromHost === toHost) return headers;
+	const copy: Record<string, string> = {};
+	for (const [key, value] of Object.entries(headers)) {
+		if (/^(authorization|proxy-authorization|cookie)$/i.test(key)) continue;
+		copy[key] = value;
+	}
+	return copy;
+}
+
 export const obsidianHttpClient: HttpClient = {
 	async request({
 		url,
@@ -114,23 +401,36 @@ export const obsidianHttpClient: HttpClient = {
 		body,
 	}: GitHttpRequest): Promise<GitHttpResponse> {
 		const bodyBuffer = await collectBody(body);
-		// Copy: isomorphic-git reuses and mutates this object across the
-		// discover GET and the pack POST. Writing Content-Length onto it would
-		// leak the previous POST's length onto the next GET.
-		const headersOut: Record<string, string> = { ...headers };
-		if (!headerValue(headersOut, "user-agent")) {
-			headersOut["User-Agent"] = "git/obsidian-git-vault-sync";
-		}
+		const headersOut = prepareGitHttpHeaders(headers, {
+			contentLength: bodyBuffer ? bodyBuffer.byteLength : undefined,
+		});
 		const contentType = headerValue(headersOut, "content-type");
-		// GitHub's smart HTTP POST hangs until the client gives up when the
-		// body is sent chunked (no Content-Length). `fetch` sets the length
-		// itself; `requestUrl` does not, so a pack upload/download sits until
-		// this timeout. Set it explicitly from the buffered body.
-		if (bodyBuffer) {
-			headersOut["Content-Length"] = String(bodyBuffer.byteLength);
-		}
 		const canonicalUrl = canonicalizeGitHttpUrl(url);
 		const timeoutMs = bodyBuffer ? PACK_TIMEOUT_MS : GET_TIMEOUT_MS;
+
+		// Desktop Electron rejects Content-Length on requestUrl and then
+		// leaves the git POST chunked, which GitHub never answers. Node's
+		// client frames the same body correctly.
+		if (Platform.isDesktopApp) {
+			const nodeRes = await nodeGitHttpRequest({
+				url: canonicalUrl,
+				method,
+				headers: headersOut,
+				body: bodyBuffer,
+				timeoutMs,
+			});
+			if (!nodeRes.statusCode) {
+				throw new Error("ERR_NETWORK: request failed (no response)");
+			}
+			return {
+				url: nodeRes.url,
+				method,
+				statusCode: nodeRes.statusCode,
+				statusMessage: nodeRes.statusMessage,
+				headers: nodeRes.headers,
+				body: [nodeRes.body] as unknown as GitHttpResponse["body"],
+			};
+		}
 
 		let timer: number | undefined;
 		const timeout = new Promise<never>((_, reject) => {
