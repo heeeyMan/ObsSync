@@ -378,6 +378,8 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	// wizard navigation (one conflict per step, mobile-friendly)
 	cmProgress: { en: "Conflict {i} of {n}", ru: "Конфликт {i} из {n}" },
 	cmBack: { en: "Back", ru: "Назад" },
+	cmAllLocal: { en: "Use local for all", ru: "Локальные версии для всех" },
+	cmAllRemote: { en: "Use remote for all", ru: "Версии с сервера для всех" },
 	cmNext: { en: "Next", ru: "Далее" },
 
 	// --- API conflict modal (Git Data API sync) ---

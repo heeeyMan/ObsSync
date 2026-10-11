@@ -1,4 +1,5 @@
 import { DataAdapter } from "obsidian";
+import { removeVaultFile } from "./vault-fs";
 
 /**
  * Bridges Obsidian's vault {@link DataAdapter} to the `fs` interface that
@@ -110,9 +111,7 @@ export class GitFs {
 
 	async unlink(path: string): Promise<void> {
 		const p = normalize(path);
-		if (await this.adapter.exists(p)) {
-			await this.adapter.remove(p);
-		}
+		await removeVaultFile(this.adapter, p);
 	}
 
 	async readdir(path: string): Promise<string[]> {

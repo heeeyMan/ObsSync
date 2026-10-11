@@ -88,6 +88,7 @@
    easy touch targets and the primary action is unmissable on a phone. */
 .gitsync-wizard-nav {
 	display: flex;
+	flex-wrap: wrap;
 	gap: 8px;
 }
 
@@ -331,4 +332,14 @@ body.is-mobile .gitsync-settings .setting-item-info {
 body.is-mobile .gitsync-settings .setting-item-control {
 	width: 100%;
 	justify-content: flex-start;
+}
+
+.gitsync-conflict-bulk {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 8px;
+}
+.gitsync-conflict-bulk button {
+	flex: 1 1 auto;
 }

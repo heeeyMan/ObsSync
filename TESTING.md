@@ -159,3 +159,23 @@ during live testing:
   truncated file.
 - **L1** — executable bit / symlinks are not preserved (mode hard-coded).
 - **L2** — binary-file conflicts render as garbage in the manual-edit textarea.
+
+
+## Issue #35: open notes and bulk conflict resolution
+
+Run `node scripts/repro-issue-35.mjs` for the API pull/baseline regression,
+Obsidian write notifications used by both engines, and bulk selection in both
+conflict dialogs (50 files, binary content, and deletions).
+
+Live checks on desktop (Git) and mobile (GitHub API):
+
+1. Sync two devices, then leave a note open and unchanged on device B.
+2. Edit and sync that note on device A. Sync B: its open editor should update
+   without asking for conflict resolution. Sync B again: no conflict or revert.
+3. Edit the same paragraph differently on both devices: a conflict must still
+   require resolution.
+4. With many conflicts, select **Use remote for all** or **Use local for all**.
+   Check a few files, optionally change an individual choice, then use
+   **Resolve & sync** from any step. Check binary files and deleted paths too.
+5. Close the dialog after bulk selection without applying it: selection alone
+   must not commit the resolutions.

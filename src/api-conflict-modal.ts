@@ -158,19 +158,32 @@ export class ApiConflictModal extends Modal {
 			const back = nav.createEl("button", { text: t("cmBack") });
 			back.addEventListener("click", () => this.showStep(this.current - 1));
 		}
-		if (isLast) {
-			const done = nav.createEl("button", {
-				text: t("acmResolve"),
-				cls: "mod-cta",
-			});
-			done.addEventListener("click", () => this.resolve());
-		} else {
-			const next = nav.createEl("button", {
-				text: t("cmNext"),
-				cls: "mod-cta",
-			});
+		if (!isLast) {
+			const next = nav.createEl("button", { text: t("cmNext") });
 			next.addEventListener("click", () => this.showStep(this.current + 1));
 		}
+		const done = nav.createEl("button", {
+			text: t("cmResolve"),
+			cls: "mod-cta",
+		});
+		done.addEventListener("click", () => this.resolve());
+		if (this.states.length > 1) {
+			const bulk = this.footer.createDiv({ cls: "gitsync-conflict-bulk" });
+			for (const choice of ["local", "remote"] as const) {
+				const button = bulk.createEl("button", {
+					text: t(choice === "local" ? "cmAllLocal" : "cmAllRemote"),
+				});
+				button.addEventListener("click", () => this.selectAll(choice));
+			}
+		}
+	}
+
+	private selectAll(choice: "local" | "remote") {
+		for (const state of this.states) state.choice = choice;
+		for (const step of this.steps) step.remove();
+		this.steps = [];
+		for (const state of this.states) this.renderFile(this.body, state);
+		this.showStep(this.current);
 	}
 
 	private renderFile(parent: HTMLElement, state: FileState) {

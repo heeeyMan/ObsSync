@@ -1,5 +1,6 @@
 import { requestUrl, RequestUrlResponse, DataAdapter } from "obsidian";
 import { t } from "./i18n";
+import { removeVaultFile } from "./vault-fs";
 
 /**
  * GitHub Git Data API sync engine. It performs a full bidirectional sync over
@@ -982,7 +983,7 @@ export async function apiSync(opts: {
 		}
 	}
 	for (const p of toDeleteLocal) {
-		if (await adapter.exists(p)) await adapter.remove(p);
+		await removeVaultFile(adapter, p);
 		result.deletedLocal.push(p);
 	}
 
@@ -1099,8 +1100,8 @@ export async function commitResolutions(opts: {
 	for (const r of resolved) {
 		if (r.content !== null) {
 			await writeVaultFile(adapter, r.path, r.content);
-		} else if (await adapter.exists(r.path)) {
-			await adapter.remove(r.path);
+		} else {
+			await removeVaultFile(adapter, r.path);
 		}
 	}
 

@@ -1,6 +1,6 @@
 {
 	"name": "git-vault-sync",
-	"version": "0.2.24",
+	"version": "0.2.25",
 	"description": "Git Vault Sync — one-click Git sync for Obsidian with conflict resolution (EN/RU).",
 	"main": "main.js",
 	"type": "module",
@@ -8,7 +8,7 @@
 		"postinstall": "node scripts/patch-isomorphic-git.mjs",
 		"dev": "node scripts/patch-isomorphic-git.mjs && node esbuild.config.mjs",
 		"build": "node scripts/patch-isomorphic-git.mjs && tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"test": "node scripts/patch-isomorphic-git.mjs && node scripts/regression.mjs && node scripts/git-http-url.mjs && node scripts/repro-push-pack.mjs && node scripts/repro-fetch-haves.mjs && node scripts/repro-issue-31.mjs && node scripts/repro-bug-002.mjs && node scripts/repro-bug-002-e2e.mjs && node scripts/repro-issue-32.mjs",
+		"test": "node scripts/patch-isomorphic-git.mjs && node scripts/regression.mjs && node scripts/git-http-url.mjs && node scripts/repro-push-pack.mjs && node scripts/repro-fetch-haves.mjs && node scripts/repro-issue-31.mjs && node scripts/repro-bug-002.mjs && node scripts/repro-bug-002-e2e.mjs && node scripts/repro-issue-32.mjs && node scripts/repro-issue-34.mjs && node scripts/repro-issue-35.mjs",
 		"repro:issue31": "node scripts/repro-issue-31.mjs",
 		"repro:bug2": "node scripts/repro-bug-002.mjs",
 		"repro:bug2e2e": "node scripts/repro-bug-002-e2e.mjs",

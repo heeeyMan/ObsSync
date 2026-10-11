@@ -22,6 +22,7 @@ import {
 import { ApiConflictFile, ApiConflictModal } from "./api-conflict-modal";
 import { ErrorDetailModal, SyncErrorInfo } from "./error-modal";
 import { setLanguage, t } from "./i18n";
+import { createSyncAdapter } from "./obsidian-fs";
 
 export default class GitSyncPlugin extends Plugin {
 	settings!: GitSyncSettings;
@@ -59,7 +60,7 @@ export default class GitSyncPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 		setLanguage(this.settings.language);
-		this.git = new GitManager(this.app.vault.adapter, () => this.settings);
+		this.git = new GitManager(createSyncAdapter(this.app.vault), () => this.settings);
 		// Never let the engine commit our own data.json (it holds the PAT).
 		this.git.setAlwaysExclude([
 			`${this.app.vault.configDir}/plugins/${this.manifest.id}/data.json`,
@@ -426,7 +427,7 @@ export default class GitSyncPlugin extends Plugin {
 			repo: parsed.repo,
 			branch,
 			token,
-			adapter: this.app.vault.adapter,
+			adapter: createSyncAdapter(this.app.vault),
 			baseline: this.settings.apiBaseline,
 			excluded,
 			message,
@@ -697,7 +698,7 @@ export default class GitSyncPlugin extends Plugin {
 		conflicts: ConflictInfo[],
 		message: string
 	): Promise<void> {
-		const adapter = this.app.vault.adapter;
+		const adapter = createSyncAdapter(this.app.vault);
 
 		// Lazily fetch both sides' bytes for each conflict (one blob at a time;
 		// the local file is already on disk). null = deleted on that side.
