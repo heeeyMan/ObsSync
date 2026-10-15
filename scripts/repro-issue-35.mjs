@@ -22,6 +22,7 @@ globalThis.window = globalThis;
 const stub = join(temp, 'obsidian.mjs');
 await writeFile(stub, `
 export class TFile { constructor(path) { this.path = path; } }
+export class FileSystemAdapter {}
 export const Platform = { isMobile: false };
 export function getLanguage() { return 'en'; }
 export function requestUrl(opts) { return globalThis.requestMock(opts); }

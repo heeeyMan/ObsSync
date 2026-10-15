@@ -17,7 +17,15 @@ export async function removeVaultFile(adapter: DataAdapter, path: string): Promi
 		}
 		const listing = await adapter.list(parent);
 		if (listing.files.length || listing.folders.length) return;
-		await adapter.rmdir(parent, false);
+		try {
+			await adapter.rmdir(parent, false);
+		} catch (error) {
+			const code = (error as { code?: string }).code;
+			// Another checkout worker may have removed the directory, or a
+			// local edit may have made it non-empty after our listing.
+			if (code === "ENOTEMPTY" || code === "EEXIST") return;
+			if (code !== "ENOENT") throw error;
+		}
 		segments.pop();
 	}
 }

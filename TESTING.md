@@ -161,6 +161,23 @@ during live testing:
 - **L2** — binary-file conflicts render as garbage in the manual-edit textarea.
 
 
+## Issue #34: mobile rename followed by two desktop syncs
+
+Run `node scripts/repro-issue-34-roundtrip.mjs`. Its control reproduces the
+Obsidian 1.14.4 desktop adapter's `ERR_FS_EISDIR` when removing an empty
+directory: checkout aborts after HEAD advances, leaving remote files marked
+deleted locally. The fixed case checks text, empty and binary files, two sync
+passes, and refusal to remove a nonempty directory.
+
+Live check with a fresh test folder containing a note:
+
+1. Create `Variant1` on desktop; sync desktop, then mobile.
+2. Rename it to `Variant2` on desktop; sync desktop, then mobile.
+3. Rename it to `Variant3` on mobile; sync mobile, then desktop.
+4. Confirm desktop shows `Variant3` with the note and no old folder.
+5. Sync desktop again. Confirm GitHub still contains `Variant3` and no
+   deletion commit was created. Sync mobile again and check the note.
+
 ## Issue #35: open notes and bulk conflict resolution
 
 Run `node scripts/repro-issue-35.mjs` for the API pull/baseline regression,
