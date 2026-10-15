@@ -37,7 +37,7 @@ export interface GitSyncSettings {
 	lastSyncAt: number;
 	/** Newline-separated glob patterns of files GitSync should never sync. */
 	excludePaths: string;
-	/** Interface language ("auto" follows Obsidian). */
+	/** Interface language ("auto" follows the system). */
 	language: LangPref;
 	/**
 	 * Which sync engine to use:
@@ -116,6 +116,22 @@ export class GitSyncSettingTab extends PluginSettingTab {
 
 		const s = this.plugin.settings;
 		const hasCreds = !!s.remoteUrl && !!s.token;
+
+		new Setting(containerEl)
+			.setName(t("setLangName"))
+			.setDesc(t("setLangDesc"))
+			.addDropdown((dd) =>
+				dd
+					.addOption("auto", t("langAuto"))
+					.addOption("en", t("langEn"))
+					.addOption("ru", t("langRu"))
+					.setValue(s.language)
+					.onChange(async (value) => {
+						s.language = value as LangPref;
+						await this.plugin.saveSettings();
+						this.display();
+					})
+			);
 
 		// Auto-load remote branches the first time the tab opens with creds set.
 		if (hasCreds && !this.branchesFetched) {
@@ -410,21 +426,7 @@ export class GitSyncSettingTab extends PluginSettingTab {
 			this.plugin.effectiveEngine() === "api"
 		);
 
-		new Setting(containerEl)
-			.setName(t("setLangName"))
-			.setDesc(t("setLangDesc"))
-			.addDropdown((dd) =>
-				dd
-					.addOption("auto", t("langAuto"))
-					.addOption("en", t("langEn"))
-					.addOption("ru", t("langRu"))
-					.setValue(s.language)
-					.onChange(async (value) => {
-						s.language = value as LangPref;
-						await this.plugin.saveSettings();
-						this.display();
-					})
-			);
+
 
 		if (scroller) scroller.scrollTop = prevScroll;
 	}

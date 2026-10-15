@@ -1,9 +1,8 @@
 /**
  * Tiny i18n for GitSync. Strings are keyed; each key has an `en` and `ru`
  * value. The active language is chosen from the plugin's "Language" setting,
- * which defaults to following Obsidian's own UI language.
+ * which defaults to following the system language.
  */
-import { getLanguage } from "obsidian";
 
 export type Lang = "en" | "ru";
 export type LangPref = "auto" | Lang;
@@ -347,8 +346,8 @@ const STRINGS: Record<string, Record<Lang, string>> = {
 	},
 	setLangName: { en: "Language", ru: "Язык" },
 	setLangDesc: {
-		en: "Interface language. Auto follows Obsidian's language.",
-		ru: "Язык интерфейса. «Авто» следует языку Obsidian.",
+		en: "Interface language. Auto uses the system language (Russian or English).",
+		ru: "Язык интерфейса. «Авто» использует язык системы (русский или английский).",
 	},
 	langAuto: { en: "Auto", ru: "Авто" },
 	langEn: { en: "English", ru: "English" },
@@ -443,10 +442,12 @@ export function setLanguage(pref: LangPref): void {
 		current = pref;
 		return;
 	}
-	// Auto: follow Obsidian's UI language via the public API.
-	const obsidianLang = getLanguage();
-	current = obsidianLang === "ru" || obsidianLang.startsWith("ru") ? "ru" : "en";
+	// Electron and mobile WebViews expose the system's preferred locale here.
+	const locale = typeof navigator === "undefined" ? "" : navigator.language;
+	current = /^ru(?:[-_]|$)/i.test(locale ?? "") ? "ru" : "en";
 }
+
+export function getCurrentLanguage(): Lang { return current; }
 
 /** Translate a key, substituting `{name}` placeholders from `vars`. */
 export function t(key: keyof typeof STRINGS, vars?: Record<string, string | number>): string {

@@ -1,4 +1,4 @@
-import { Menu, Notice, Platform, Plugin, setIcon } from "obsidian";
+import { Menu, Notice, Platform, Plugin, setIcon, setTooltip } from "obsidian";
 import {
 	DEFAULT_SETTINGS,
 	GitSyncSettings,
@@ -21,7 +21,7 @@ import {
 } from "./github-sync";
 import { ApiConflictFile, ApiConflictModal } from "./api-conflict-modal";
 import { ErrorDetailModal, SyncErrorInfo } from "./error-modal";
-import { setLanguage, t } from "./i18n";
+import { getCurrentLanguage, setLanguage, t } from "./i18n";
 import { createSyncAdapter } from "./obsidian-fs";
 
 export default class GitSyncPlugin extends Plugin {
@@ -35,6 +35,8 @@ export default class GitSyncPlugin extends Plugin {
 	 *  available, so the icon is removed entirely rather than just hidden —
 	 *  a display:none element still shows up in the mobile ribbon menu. */
 	private reviewRibbonEl?: HTMLElement;
+	private syncRibbonEl?: HTMLElement;
+	private statusState: "idle" | "syncing" | "error" | "conflict" = "idle";
 	private syncing = false;
 	private changeCount = 0;
 	private lastSyncError = false;
@@ -66,7 +68,7 @@ export default class GitSyncPlugin extends Plugin {
 			`${this.app.vault.configDir}/plugins/${this.manifest.id}/data.json`,
 		]);
 
-		this.addRibbonIcon("refresh-cw", t("ribbonSync"), () => {
+		this.syncRibbonEl = this.addRibbonIcon("refresh-cw", t("ribbonSync"), () => {
 			void this.sync();
 		});
 
@@ -94,29 +96,7 @@ export default class GitSyncPlugin extends Plugin {
 			this.onVisibilityChange()
 		);
 
-		this.addCommand({
-			id: "sync",
-			name: t("cmdSync"),
-			callback: () => void this.sync(),
-		});
-
-		this.addCommand({
-			id: "review",
-			name: t("cmdReview"),
-			callback: () => this.openReview(),
-		});
-
-		this.addCommand({
-			id: "test-connection",
-			name: t("cmdTest"),
-			callback: () => void this.testConnection(),
-		});
-
-		this.addCommand({
-			id: "show-last-error",
-			name: t("cmdShowError"),
-			callback: () => this.showLastError(),
-		});
+		this.registerLocalizedCommands();
 
 		this.addSettingTab(new GitSyncSettingTab(this.app, this));
 
@@ -184,10 +164,44 @@ export default class GitSyncPlugin extends Plugin {
 		}
 	}
 
+	private registerLocalizedCommands() {
+		this.addCommand({
+			id: "sync",
+			name: t("cmdSync"),
+			callback: () => void this.sync(),
+		});
+
+		this.addCommand({
+			id: "review",
+			name: t("cmdReview"),
+			callback: () => this.openReview(),
+		});
+
+		this.addCommand({
+			id: "test-connection",
+			name: t("cmdTest"),
+			callback: () => void this.testConnection(),
+		});
+
+		this.addCommand({
+			id: "show-last-error",
+			name: t("cmdShowError"),
+			callback: () => this.showLastError(),
+		});
+	}
+
 	async saveSettings() {
 		await this.saveData(this.settings);
+		const previousLanguage = getCurrentLanguage();
 		setLanguage(this.settings.language);
 		this.updateReviewRibbonVisibility();
+		if (previousLanguage !== getCurrentLanguage()) {
+			for (const id of ["sync", "review", "test-connection", "show-last-error"]) this.removeCommand(id);
+			this.registerLocalizedCommands();
+			if (this.syncRibbonEl) setTooltip(this.syncRibbonEl, t("ribbonSync"), { placement: "right" });
+			if (this.reviewRibbonEl) setTooltip(this.reviewRibbonEl, t("ribbonReview"), { placement: "right" });
+			this.setStatus(this.statusState);
+		}
 	}
 
 	/**
@@ -827,6 +841,7 @@ export default class GitSyncPlugin extends Plugin {
 	}
 
 	private setStatus(state: "idle" | "syncing" | "error" | "conflict") {
+		this.statusState = state;
 		this.statusBarEl.removeClass(
 			"gitsync-status-bar--syncing",
 			"gitsync-status-bar--error"

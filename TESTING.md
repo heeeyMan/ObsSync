@@ -196,3 +196,14 @@ Live checks on desktop (Git) and mobile (GitHub API):
    **Resolve & sync** from any step. Check binary files and deleted paths too.
 5. Close the dialog after bulk selection without applying it: selection alone
    must not commit the resolutions.
+
+## Interface language
+
+`node scripts/i18n.mjs` checks system locale selection, manual overrides,
+translation completeness, placeholders and literal translation keys.
+
+On desktop and mobile, switch English → Русский → Auto in plugin settings.
+Check the settings, command palette, ribbon tooltips, status bar menu, and
+newly opened review/conflict dialogs. Restart the plugin and confirm that the
+choice persists. With Auto, Russian system locales should select Russian and
+other system locales should select English, regardless of Obsidian UI language.
