@@ -207,3 +207,11 @@ Check the settings, command palette, ribbon tooltips, status bar menu, and
 newly opened review/conflict dialogs. Restart the plugin and confirm that the
 choice persists. With Auto, Russian system locales should select Russian and
 other system locales should select English, regardless of Obsidian UI language.
+
+## Android large-file diagnostics (issue #33)
+
+See [the diagnostic build instructions](docs/ISSUE_33_DIAGNOSTICS.md) for the
+in-app experiment, restart-safe report, measured GitHub Range behavior, and the
+Android checks still required. `node scripts/repro-issue-33.mjs` tests the actual
+downloader with a 64,931,472-byte fixture and failure cases. The optional live,
+read-only probe is `node scripts/probe-github-ranges.mjs --auth`.

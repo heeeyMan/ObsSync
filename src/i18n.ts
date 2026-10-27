@@ -8,6 +8,16 @@ export type Lang = "en" | "ru";
 export type LangPref = "auto" | Lang;
 
 const STRINGS: Record<string, Record<Lang, string>> = {
+	cmdDiagnosticsToggle: { en: "Enable / disable sync diagnostics", ru: "Включить / выключить диагностику синхронизации" },
+	cmdDiagnosticsShow: { en: "Show sync diagnostics", ru: "Показать диагностику синхронизации" },
+	diagnosticsOn: { en: "Sync diagnostics enabled", ru: "Диагностика синхронизации включена" },
+	diagnosticsOff: { en: "Sync diagnostics disabled", ru: "Диагностика синхронизации выключена" },
+	cmdChunkTest: { en: "Test chunked download of largest remote file", ru: "Проверить загрузку крупнейшего файла частями" },
+	chunkTestRunning: { en: "Testing chunked download…", ru: "Проверка загрузки частями…" },
+	chunkTestProgress: { en: "Downloaded {done} / {total} bytes", ru: "Загружено {done} / {total} байт" },
+	chunkTestComplete: { en: "Download verified; test copy removed. See sync diagnostics.", ru: "Загрузка проверена; тестовая копия удалена. Откройте диагностику синхронизации." },
+	chunkTestFailed: { en: "Download test failed. See sync diagnostics for the last completed stage.", ru: "Проверка загрузки завершилась ошибкой. Последний этап сохранён в диагностике синхронизации." },
+
 	// --- ribbon / commands ---
 	ribbonSync: { en: "Git Vault Sync: Sync vault", ru: "Git Vault Sync: синхронизировать хранилище" },
 	ribbonReview: {

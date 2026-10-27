@@ -1,4 +1,5 @@
 import { requestUrl, RequestUrlResponse, DataAdapter } from "obsidian";
+import type { Diagnose } from "./sync-diagnostics";
 import { t } from "./i18n";
 import { removeVaultFile } from "./vault-fs";
 
@@ -599,7 +600,7 @@ export async function gitBlobSha(content: Uint8Array): Promise<string> {
  * Feed bytes with {@link update} (any number of calls, any sizes) then read the
  * lowercase hex digest once with {@link hex}. Not reusable after `hex()`.
  */
-class Sha1 {
+export class Sha1 {
 	private h0 = 0x67452301;
 	private h1 = 0xefcdab89;
 	private h2 = 0x98badcfe;
@@ -816,6 +817,7 @@ async function scanLocalShas(
 	adapter: DataAdapter,
 	excluded: (path: string) => boolean,
 	onProgress?: (msg: string) => void,
+	diagnose?: Diagnose,
 ): Promise<Record<string, string>> {
 	const paths: string[] = [];
 	await listVaultFiles(adapter, "", excluded, paths);
@@ -823,8 +825,12 @@ async function scanLocalShas(
 	const shas: Record<string, string> = {};
 	let i = 0;
 	for (const p of paths) {
+		const file = diagnose ? await gitBlobSha(new TextEncoder().encode(p)) : undefined;
+		if (diagnose) await diagnose({ stage: "scan-read", file, total: (await adapter.stat(p))?.size });
 		let bytes: Uint8Array | undefined = new Uint8Array(await adapter.readBinary(p));
+		await diagnose?.({ stage: "scan-hash", file, total: bytes.length });
 		shas[p] = await gitBlobSha(bytes);
+		await diagnose?.({ stage: "scan-done", file });
 		bytes = undefined;
 		i++;
 		if (i % PROGRESS_EVERY === 0) {
@@ -886,10 +892,12 @@ export async function apiSync(opts: {
 	excluded: (path: string) => boolean;
 	message?: string;
 	onProgress?: (msg: string) => void;
+	diagnose?: Diagnose;
 }): Promise<ApiSyncResult> {
 	const { owner, repo, branch, token, adapter, baseline, excluded, onProgress } = opts;
 
 	// 1. Remote state.
+	await opts.diagnose?.({ stage: "remote-head" });
 	onProgress?.(t("progFetching"));
 	const { commitSha: remoteCommit, treeSha: remoteTree } = await getBranchHead(
 		owner,
@@ -897,12 +905,14 @@ export async function apiSync(opts: {
 		branch,
 		token,
 	);
+	await opts.diagnose?.({ stage: "remote-tree" });
 	const { entries, truncated } = await getTree(owner, repo, remoteTree, token);
 	// GitHub truncates the recursive tree past its response limit. A partial list
 	// makes missing paths look "deleted remotely" and would delete them locally —
 	// abort before any diff/delete rather than silently lose data.
 	if (truncated) throw new Error(t("errTreeTruncated"));
 	const remoteShas: Record<string, string> = {};
+	const sizes = new Map(entries.map(e => [e.path, e.size]));
 	// Remember each tracked path's git mode so re-pushing a changed file keeps its
 	// executable bit (100755) instead of downgrading it to 100644 — otherwise a
 	// mobile push would undo the desktop engine's mode preservation and ping-pong.
@@ -914,7 +924,7 @@ export async function apiSync(opts: {
 	}
 
 	// 2. Local state.
-	const localShas = await scanLocalShas(adapter, excluded, onProgress);
+	const localShas = await scanLocalShas(adapter, excluded, onProgress, opts.diagnose);
 
 	// 3. Diff both sides against the baseline.
 	const local = diffShas(localShas, baseline.shas);
@@ -972,9 +982,12 @@ export async function apiSync(opts: {
 		if (localShas[p] === remoteShas[p]) {
 			continue;
 		}
+		await opts.diagnose?.({ stage: "pull-download", file: remoteShas[p], total: sizes.get(p) });
 		let bytes: Uint8Array | undefined = await getBlob(owner, repo, remoteShas[p], token);
+		await opts.diagnose?.({ stage: "pull-write", file: remoteShas[p], total: bytes.length });
 		await writeVaultFile(adapter, p, bytes);
 		bytes = undefined;
+		await opts.diagnose?.({ stage: "pull-done", file: remoteShas[p] });
 		result.pulled.push(p);
 		pullCount++;
 		if (pullCount % PROGRESS_EVERY === 0) {
@@ -1002,8 +1015,11 @@ export async function apiSync(opts: {
 		const treeEntries: TreeEntryInput[] = [];
 		let pushCount = 0;
 		for (const p of realPush) {
+			await opts.diagnose?.({ stage: "push-read", file: localShas[p] });
 			let bytes: Uint8Array | undefined = new Uint8Array(await adapter.readBinary(p));
+			await opts.diagnose?.({ stage: "push-upload", file: localShas[p], total: bytes.length });
 			const sha = await createBlob(owner, repo, token, bytes);
+			await opts.diagnose?.({ stage: "push-done", file: localShas[p] });
 			bytes = undefined;
 			// Keep the remote's mode for an existing path (preserves 100755); a
 			// brand-new path has no remote mode → createTree defaults to 100644.

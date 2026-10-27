@@ -1,4 +1,4 @@
-import { Menu, Notice, Platform, Plugin, setIcon, setTooltip } from "obsidian";
+import { Modal, Menu, Notice, Platform, Plugin, setIcon, setTooltip } from "obsidian";
 import {
 	DEFAULT_SETTINGS,
 	GitSyncSettings,
@@ -17,6 +17,8 @@ import {
 	commitResolutions,
 	ConflictInfo,
 	getBlob,
+	getBranchHead,
+	getTree,
 	parseGitHubRepo,
 } from "./github-sync";
 import { ApiConflictFile, ApiConflictModal } from "./api-conflict-modal";
@@ -24,8 +26,12 @@ import { ErrorDetailModal, SyncErrorInfo } from "./error-modal";
 import { getCurrentLanguage, setLanguage, t } from "./i18n";
 import { createSyncAdapter } from "./obsidian-fs";
 
+import { SyncDiagnostics } from "./sync-diagnostics";
+import { downloadInChunks } from "./chunked-download";
+
 export default class GitSyncPlugin extends Plugin {
 	settings!: GitSyncSettings;
+	private diagnostics!: SyncDiagnostics;
 	git!: GitManager;
 	private statusBarEl!: HTMLElement;
 	private statusIconEl!: HTMLElement;
@@ -62,10 +68,13 @@ export default class GitSyncPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 		setLanguage(this.settings.language);
+		this.diagnostics = new SyncDiagnostics(this.app.vault.adapter, `${this.app.vault.configDir}/plugins/${this.manifest.id}/diagnostics`);
+		await this.diagnostics.load();
 		this.git = new GitManager(createSyncAdapter(this.app.vault), () => this.settings);
 		// Never let the engine commit our own data.json (it holds the PAT).
 		this.git.setAlwaysExclude([
 			`${this.app.vault.configDir}/plugins/${this.manifest.id}/data.json`,
+			this.diagnostics.dir,
 		]);
 
 		this.syncRibbonEl = this.addRibbonIcon("refresh-cw", t("ribbonSync"), () => {
@@ -165,6 +174,23 @@ export default class GitSyncPlugin extends Plugin {
 	}
 
 	private registerLocalizedCommands() {
+		this.addCommand({ id: "toggle-diagnostics", name: t("cmdDiagnosticsToggle"), callback: () => {
+			this.settings.diagnosticsEnabled = !this.settings.diagnosticsEnabled;
+			void this.saveSettings().then(() => new Notice(t(this.settings.diagnosticsEnabled ? "diagnosticsOn" : "diagnosticsOff")));
+		} });
+		this.addCommand({ id: "show-diagnostics", name: t("cmdDiagnosticsShow"), callback: () => {
+			const modal = new Modal(this.app);
+			modal.titleEl.setText(t("cmdDiagnosticsShow"));
+			const report = modal.contentEl.createEl("textarea");
+			report.readOnly = true;
+			report.rows = 20;
+			report.style.width = "100%";
+			report.value = JSON.stringify({ environment: { plugin: this.manifest.version, mobile: Platform.isMobile,
+				userAgent: navigator.userAgent }, ...JSON.parse(this.diagnostics.report()) }, null, 2);
+			modal.open();
+		} });
+		this.addCommand({ id: "test-chunked-download", name: t("cmdChunkTest"), callback: () => void this.testChunkedDownload() });
+
 		this.addCommand({
 			id: "sync",
 			name: t("cmdSync"),
@@ -190,13 +216,50 @@ export default class GitSyncPlugin extends Plugin {
 		});
 	}
 
+	/** Explicit experiment: downloads only into our excluded scratch directory. */
+	private async testChunkedDownload(): Promise<void> {
+		if (this.syncing || this.conflictActive) { new Notice(t("noticeInProgress")); return; }
+		const repo = parseGitHubRepo(this.settings.remoteUrl);
+		if (!repo || !this.settings.token) { new Notice(t("noticeConfigure")); return; }
+		this.syncing = true;
+		const notice = new Notice(t("chunkTestRunning"), 0);
+		try {
+			await this.diagnostics.record({ stage: "prototype-start" });
+			const token = this.settings.token;
+			const head = await getBranchHead(repo.owner, repo.repo, this.settings.branch || "main", token);
+			const tree = await getTree(repo.owner, repo.repo, head.treeSha, token);
+			if (tree.truncated) throw new Error("TREE_TRUNCATED");
+			const file = tree.entries.filter(e => e.mode === "100644" || e.mode === "100755")
+				.reduce<typeof tree.entries[number] | undefined>((largest, e) => !largest || e.size > largest.size ? e : largest, undefined);
+			if (!file) throw new Error("NO_FILES");
+			const destination = `${this.diagnostics.dir}/download.part`;
+			// Clean only this experiment's own residue after a previous app crash.
+			if (await this.app.vault.adapter.exists(destination)) await this.app.vault.adapter.remove(destination);
+			await downloadInChunks({ ...repo, commit: head.commitSha, path: file.path,
+				sha: file.sha, size: file.size, token, destination, adapter: this.app.vault.adapter,
+				diagnose: async event => {
+					await this.diagnostics.record(event);
+					if (event.stage === "chunk-written") notice.setMessage(t("chunkTestProgress", {
+						done: event.bytes ?? 0, total: event.total ?? 0 }));
+				} });
+			await this.diagnostics.record({ stage: "prototype-complete" });
+			new Notice(t("chunkTestComplete"), 10000);
+		} catch (error) {
+			// Keep the preceding stage and HTTP status, never persist raw exceptions.
+			const known = ["INVALID_METADATA", "INVALID_PATH", "DESTINATION_EXISTS", "RANGE_UNSUPPORTED", "RANGE_LENGTH_MISMATCH", "BLOB_HASH_MISMATCH", "DISK_SIZE_MISMATCH", "TREE_TRUNCATED", "NO_FILES"];
+			const message = error instanceof Error ? error.message : "";
+			await this.diagnostics.record({ stage: "prototype-failed", code: known.includes(message) ? message : "TRANSPORT_OR_STORAGE" }).catch(() => {});
+			new Notice(t("chunkTestFailed"), 10000);
+		} finally { notice.hide(); this.syncing = false; }
+	}
+
 	async saveSettings() {
 		await this.saveData(this.settings);
 		const previousLanguage = getCurrentLanguage();
 		setLanguage(this.settings.language);
 		this.updateReviewRibbonVisibility();
 		if (previousLanguage !== getCurrentLanguage()) {
-			for (const id of ["sync", "review", "test-connection", "show-last-error"]) this.removeCommand(id);
+			for (const id of ["sync", "review", "test-connection", "show-last-error", "toggle-diagnostics", "show-diagnostics", "test-chunked-download"]) this.removeCommand(id);
 			this.registerLocalizedCommands();
 			if (this.syncRibbonEl) setTooltip(this.syncRibbonEl, t("ribbonSync"), { placement: "right" });
 			if (this.reviewRibbonEl) setTooltip(this.reviewRibbonEl, t("ribbonReview"), { placement: "right" });
@@ -278,12 +341,15 @@ export default class GitSyncPlugin extends Plugin {
 				? new Notice("Git Vault Sync: " + t("statusSyncing"), 0)
 				: null;
 		try {
+			if (this.settings.diagnosticsEnabled) await this.diagnostics.record({ stage: "sync-start" });
 			if (this.effectiveEngine() === "api") {
 				await this.syncApi(silent, only, progressNotice);
 			} else {
 				await this.syncGit(silent, only, progressNotice);
 			}
+			if (this.settings.diagnosticsEnabled) await this.diagnostics.record({ stage: "sync-returned" });
 		} catch (err) {
+			if (this.settings.diagnosticsEnabled) await this.diagnostics.record({ stage: "sync-failed" }).catch(() => {});
 			if (err instanceof MergeConflict) {
 				console.warn("Git Vault Sync merge conflict", err.files);
 				if (silent) {
@@ -443,6 +509,7 @@ export default class GitSyncPlugin extends Plugin {
 			token,
 			adapter: createSyncAdapter(this.app.vault),
 			baseline: this.settings.apiBaseline,
+			diagnose: this.settings.diagnosticsEnabled ? event => this.diagnostics.record(event) : undefined,
 			excluded,
 			message,
 			onProgress: (msg) => {

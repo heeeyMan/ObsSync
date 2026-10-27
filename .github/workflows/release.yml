@@ -5,9 +5,6 @@ name: Release
 # (main.js, manifest.json, styles.css) get build-provenance attestations, which
 # satisfies Obsidian's review recommendation for artifact attestations.
 on:
-  push:
-    tags:
-      - "*.*.*"
   # Manual runs are a build/compatibility smoke test (e.g. to confirm the
   # actions run on Node 24). The attest + release steps below are guarded to
   # tag pushes, so a manual run never publishes a Release.

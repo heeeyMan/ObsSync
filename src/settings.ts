@@ -13,6 +13,7 @@ import { type ApiSyncBaseline, createBranch, parseGitHubRepo } from "./github-sy
 import { LangPref, t } from "./i18n";
 
 export interface GitSyncSettings {
+	diagnosticsEnabled: boolean;
 	/** HTTPS clone URL of the remote, e.g. https://github.com/user/repo.git */
 	remoteUrl: string;
 	/** Branch to sync against. */
@@ -56,6 +57,7 @@ export interface GitSyncSettings {
 }
 
 export const DEFAULT_SETTINGS: GitSyncSettings = {
+	diagnosticsEnabled: false,
 	remoteUrl: "",
 	branch: "main",
 	authorName: "",
