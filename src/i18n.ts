@@ -8,6 +8,13 @@ export type Lang = "en" | "ru";
 export type LangPref = "auto" | Lang;
 
 const STRINGS: Record<string, Record<Lang, string>> = {
+	errChunkLocalChanged: { en: "A local file changed during download. Sync stopped to preserve your edits; please retry.", ru: "Локальный файл изменился во время загрузки. Синхронизация остановлена для сохранения правок; повторите попытку." },
+	errChunkLocalStream: { en: "Obsidian could not stream a local file. Sync stopped; collect the diagnostic report.", ru: "Obsidian не смог прочитать локальный файл потоком. Синхронизация остановлена; сохраните диагностический отчёт." },
+	errChunkRecovery: { en: "An interrupted file replacement needs attention. Both copies were preserved in the vault/plugin transfer directory. Collect diagnostics before retrying.", ru: "Не удалось безопасно завершить прерванную замену файла. Копии сохранены в хранилище/папке transfer плагина. Сохраните диагностику перед повтором." },
+	errChunkTransfer: { en: "Chunked download failed ({code}). The existing file was preserved. See sync diagnostics.", ru: "Загрузка частями не удалась ({code}). Прежний файл сохранён. Откройте диагностику синхронизации." },
+	errChunkIntegrity: { en: "The downloaded file failed its on-disk checksum. The existing file was kept; please retry.", ru: "Контрольная сумма скачанного файла на диске не совпала. Прежний файл сохранён; повторите попытку." },
+	errChunkMetadata: { en: "GitHub returned an invalid file size. Sync stopped before downloading files.", ru: "GitHub вернул некорректный размер файла. Синхронизация остановлена до загрузки файлов." },
+
 	cmdDiagnosticsToggle: { en: "Enable / disable sync diagnostics", ru: "Включить / выключить диагностику синхронизации" },
 	cmdDiagnosticsShow: { en: "Show sync diagnostics", ru: "Показать диагностику синхронизации" },
 	diagnosticsOn: { en: "Sync diagnostics enabled", ru: "Диагностика синхронизации включена" },

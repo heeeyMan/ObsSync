@@ -1,5 +1,67 @@
 # Issue #33: diagnostic build and chunked-download experiment
 
+## Integrated candidate: 0.2.27-issue33.2 (2026-10-28)
+
+The standalone prototype below describes `.1`. Candidate `.2` integrates the
+range downloader into **ordinary API Sync**, for remote files above 1 MiB.
+This is a transport threshold, not a file-size cap: larger files are still
+synchronized. Small files retain the existing path, including Vault notifications
+for open notes. The Git/isomorphic-git engine is unchanged.
+
+- Download to an excluded temporary file at a fixed remote commit.
+- Verify both incoming bytes and the assembled on-disk file using Git SHA-1.
+- Check the local file still matches the scan before replacing it.
+- Retain the original in `diagnostics/transfer/previous.bin` during replacement.
+  A persisted transaction permits recovery before the next scan. If both copies
+  exist and the target differs from the downloaded version, stop and preserve
+  both rather than guess which one to discard. Git-engine sync is blocked while
+  such a transaction is pending, to avoid committing the temporary absence.
+- Hash large local files through a streamed local resource response instead of
+  `readBinary`. No whole-file fallback if local streaming is unavailable.
+- Keep the original baseline on a failed sync; already verified downloads can
+  be recognized on retry. Failed downloads do not replace the previous file.
+
+Minimum Obsidian version is now **1.12.3**, where the public API marks
+`appendBinary` as introduced. The reporter's Obsidian 1.14.4 meets this requirement.
+
+**What is verified:** Node integration tests perform a full API pull of a
+64,931,472-byte attachment and a small note, then a repeat Sync with no download
+or push. Large full-file reads are forbidden by the adapter mock. Failure tests
+cover network errors, ignored ranges, corrupt responses, disk full, same-size
+corrupt disk writes, concurrent local edits, failed promotion, and simulated
+process death before/after replacement. Existing sync/conflict regression tests
+also pass.
+
+**What remains device-only:** local resource streaming (including excluded temp
+files), native rename behavior, file watcher/editor refresh for large files, and
+memory use during full-vault sync. `.1`'s Android success confirms range transfer
+and append for that run, not these additional paths. Local resource responses
+may be buffered differently on other hosts. Uploads and conflict-resolution UI
+still use the previous whole-file paths; this candidate targets initial pull and
+unchanged repeat sync, not a claim that every sync operation is now memory-bounded.
+
+### BRAT test sequence for .2
+
+1. Keep automatic sync and sync on startup off. In BRAT edit `heeeyMan/ObsSync`
+   and select the specific/frozen version `0.2.27-issue33.2`, then reload the plugin.
+2. Select the GitHub API sync engine (Auto selects it on mobile).
+3. Enable sync diagnostics using the command; confirm the enabled notice.
+4. When asked to test this candidate, run ordinary Sync in the foreground. Save
+   the report whether it succeeds, errors or crashes. After a crash, collect the
+   report before retrying. A `scan-stream`/`pull-verify-disk` failure may indicate
+   the newly introduced local-resource read path needs work on this device.
+5. After a successful initial pull, verify several notes and the large attachment,
+   then run a second unchanged Sync and collect that report separately.
+6. Do not send `data.json` or the `transfer` directory; send only the diagnostic
+   viewer report or the bounded journal files described below. A transaction file
+   includes a local path and `previous.bin`/`pull.part` contain vault contents.
+7. Disable diagnostics after testing. Do not downgrade to `.1`/stable while a
+   file-recovery error is outstanding; keep both copies and report the failure.
+
+`node scripts/repro-issue-33-sync.mjs` is included in `npm test`.
+
+## Standalone prototype: 0.2.27-issue33.1
+
 This is a prototype, not a replacement sync engine. It adds no file-size cap and
 never silently skips files. Normal sync still uses the existing transport.
 

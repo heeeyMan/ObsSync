@@ -50,8 +50,11 @@ must contain no NUL bytes.
 - **Security:** the Personal Access Token lives in `data.json` (plaintext,
   gitignored). Never let it enter a commit; both engines always exclude the
   plugin's own `data.json`.
-- **Mobile-safe:** no system `git`, no `child_process`, no plain `fetch`
-  (CORS-blocked inside Obsidian — HTTP must go through `requestUrl`).
+- **Mobile-safe:** no system `git` or `child_process`; remote HTTP must go
+  through `requestUrl` to bypass CORS. The large-file scanner uses `fetch` only
+  for the local URI returned by `adapter.getResourcePath`, with a streamed body
+  and no remote credentials or whole-file fallback. Verify that local streaming
+  works on the target Obsidian/WebView before promoting a diagnostic build.
 
 ## Testing
 

@@ -2,9 +2,9 @@ import { DataAdapter, requestUrl } from "obsidian";
 import { Sha1 } from "./github-sync";
 import type { Diagnose } from "./sync-diagnostics";
 
-const CHUNK_BYTES = 1024 * 1024;
+export const CHUNK_BYTES = 1024 * 1024;
 
-/** Experimental, isolated from sync. Raw endpoint supports Range; Git Blobs does not.
+/** Raw endpoint supports Range; Git Blobs does not.
  * requestUrl bypasses CORS but buffers the response: a server ignoring Range can
  * still allocate a whole file before we can reject it. No whole-file fallback.
  * Destination must be a disposable, plugin-owned path, never a user's note.
@@ -13,6 +13,9 @@ export async function downloadInChunks(opts: {
 	owner: string; repo: string; commit: string; path: string; sha: string;
 	size: number; token: string; destination: string; adapter: DataAdapter;
 	diagnose: Diagnose;
+	/** Retain only a verified file for the sync installer. Default: standalone test. */
+	keepFile?: boolean;
+	onProgress?: (bytes: number, total: number) => void;
 }): Promise<void> {
 	const { adapter, destination, diagnose, size } = opts;
 	if (!Number.isSafeInteger(size) || size < 0 || !/^[a-f0-9]{40}$/.test(opts.sha) ||
@@ -25,6 +28,7 @@ export async function downloadInChunks(opts: {
 	sha.update(new TextEncoder().encode(`blob ${size}\0`));
 	await diagnose({ stage: "chunk-create", file: opts.sha, total: size });
 	await adapter.writeBinary(destination, new ArrayBuffer(0));
+	let verified = false;
 	try {
 		for (let offset = 0; offset < size; offset += CHUNK_BYTES) {
 			const end = Math.min(offset + CHUNK_BYTES, size) - 1;
@@ -44,14 +48,16 @@ export async function downloadInChunks(opts: {
 				await adapter.appendBinary(destination, response.arrayBuffer);
 			})();
 			await diagnose({ stage: "chunk-written", bytes: end + 1, total: size });
+			opts.onProgress?.(end + 1, size);
 			await new Promise(resolve => setTimeout(resolve, 0));
 		}
 		await diagnose({ stage: "chunk-verify", total: size });
 		if (sha.hex() !== opts.sha) throw new Error("BLOB_HASH_MISMATCH");
 		if ((await adapter.stat(destination))?.size !== size) throw new Error("DISK_SIZE_MISMATCH");
 		await diagnose({ stage: "chunk-complete", file: opts.sha, bytes: size, total: size });
+		verified = true;
 	} finally {
-		// Test bytes are never promoted into the vault or the sync baseline.
-		if (await adapter.exists(destination)) await adapter.remove(destination);
+		// Failures never leave an unverified file for the installer.
+		if ((!verified || !opts.keepFile) && await adapter.exists(destination)) await adapter.remove(destination);
 	}
 }

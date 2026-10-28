@@ -27,6 +27,7 @@ import { getCurrentLanguage, setLanguage, t } from "./i18n";
 import { createSyncAdapter } from "./obsidian-fs";
 
 import { SyncDiagnostics } from "./sync-diagnostics";
+import { ChunkedSync } from "./chunked-sync";
 import { downloadInChunks } from "./chunked-download";
 
 export default class GitSyncPlugin extends Plugin {
@@ -400,6 +401,8 @@ export default class GitSyncPlugin extends Plugin {
 		only: string[] | undefined,
 		progressNotice: Notice | null
 	): Promise<void> {
+		if (await this.app.vault.adapter.exists(`${this.diagnostics.dir}/transfer/transaction.json`) ||
+			await this.app.vault.adapter.exists(`${this.diagnostics.dir}/transfer/previous.bin`)) throw new Error(t("errChunkRecovery"));
 		const result = await this.git.sync((msg) => {
 			this.statusTextEl.setText(msg);
 			progressNotice?.setMessage("Git Vault Sync: " + msg);
@@ -502,12 +505,23 @@ export default class GitSyncPlugin extends Plugin {
 			.split("{{date}}")
 			.join(new Date().toISOString());
 
+		const syncAdapter = createSyncAdapter(this.app.vault);
+		const diagnose = this.settings.diagnosticsEnabled ? (event: import("./sync-diagnostics").DiagnosticEvent) => this.diagnostics.record(event) : async () => {};
+		const largeFiles = new ChunkedSync({ adapter: syncAdapter, dir: `${this.diagnostics.dir}/transfer`,
+			...parsed, token, excluded, diagnose, onProgress: (bytes, total) => {
+				const message = t("chunkTestProgress", { done: bytes, total });
+				this.statusTextEl.setText(message);
+				progressNotice?.setMessage(message);
+			} });
+		await largeFiles.recover();
+
 		const result = await apiSync({
 			owner: parsed.owner,
 			repo: parsed.repo,
 			branch,
 			token,
-			adapter: createSyncAdapter(this.app.vault),
+			adapter: syncAdapter,
+			largeFiles,
 			baseline: this.settings.apiBaseline,
 			diagnose: this.settings.diagnosticsEnabled ? event => this.diagnostics.record(event) : undefined,
 			excluded,

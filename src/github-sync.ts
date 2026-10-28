@@ -1,4 +1,5 @@
 import { requestUrl, RequestUrlResponse, DataAdapter } from "obsidian";
+import type { LargeFileSync } from "./chunked-sync";
 import type { Diagnose } from "./sync-diagnostics";
 import { t } from "./i18n";
 import { removeVaultFile } from "./vault-fs";
@@ -248,7 +249,7 @@ export async function getTree(
 			entries.push({
 				path: typeof rec.path === "string" ? rec.path : "",
 				sha: typeof rec.sha === "string" ? rec.sha : "",
-				size: typeof rec.size === "number" ? rec.size : 0,
+				size: typeof rec.size === "number" ? rec.size : -1,
 				mode: typeof rec.mode === "string" ? rec.mode : "100644",
 			});
 		}
@@ -818,6 +819,7 @@ async function scanLocalShas(
 	excluded: (path: string) => boolean,
 	onProgress?: (msg: string) => void,
 	diagnose?: Diagnose,
+	largeFiles?: LargeFileSync,
 ): Promise<Record<string, string>> {
 	const paths: string[] = [];
 	await listVaultFiles(adapter, "", excluded, paths);
@@ -826,12 +828,18 @@ async function scanLocalShas(
 	let i = 0;
 	for (const p of paths) {
 		const file = diagnose ? await gitBlobSha(new TextEncoder().encode(p)) : undefined;
-		if (diagnose) await diagnose({ stage: "scan-read", file, total: (await adapter.stat(p))?.size });
-		let bytes: Uint8Array | undefined = new Uint8Array(await adapter.readBinary(p));
-		await diagnose?.({ stage: "scan-hash", file, total: bytes.length });
-		shas[p] = await gitBlobSha(bytes);
+		const stat = largeFiles || diagnose ? await adapter.stat(p) : null;
+		await diagnose?.({ stage: "scan-read", file, total: stat?.size });
+		if (largeFiles && stat && stat.size > largeFiles.threshold) {
+			await diagnose?.({ stage: "scan-stream", file, total: stat.size });
+			shas[p] = await largeFiles.hash(p, stat.size);
+		} else {
+			let bytes: Uint8Array | undefined = new Uint8Array(await adapter.readBinary(p));
+			await diagnose?.({ stage: "scan-hash", file, total: bytes.length });
+			shas[p] = await gitBlobSha(bytes);
+			bytes = undefined;
+		}
 		await diagnose?.({ stage: "scan-done", file });
-		bytes = undefined;
 		i++;
 		if (i % PROGRESS_EVERY === 0) {
 			onProgress?.(t("progScanning"));
@@ -893,6 +901,7 @@ export async function apiSync(opts: {
 	message?: string;
 	onProgress?: (msg: string) => void;
 	diagnose?: Diagnose;
+	largeFiles?: LargeFileSync;
 }): Promise<ApiSyncResult> {
 	const { owner, repo, branch, token, adapter, baseline, excluded, onProgress } = opts;
 
@@ -919,12 +928,13 @@ export async function apiSync(opts: {
 	const remoteModes: Record<string, string> = {};
 	for (const e of entries) {
 		if (!e.path || excluded(e.path)) continue;
+		if (opts.largeFiles && (!Number.isSafeInteger(e.size) || e.size < 0)) throw new Error(t("errChunkMetadata"));
 		remoteShas[e.path] = e.sha;
 		remoteModes[e.path] = e.mode;
 	}
 
 	// 2. Local state.
-	const localShas = await scanLocalShas(adapter, excluded, onProgress, opts.diagnose);
+	const localShas = await scanLocalShas(adapter, excluded, onProgress, opts.diagnose, opts.largeFiles);
 
 	// 3. Diff both sides against the baseline.
 	const local = diffShas(localShas, baseline.shas);
@@ -983,10 +993,15 @@ export async function apiSync(opts: {
 			continue;
 		}
 		await opts.diagnose?.({ stage: "pull-download", file: remoteShas[p], total: sizes.get(p) });
-		let bytes: Uint8Array | undefined = await getBlob(owner, repo, remoteShas[p], token);
-		await opts.diagnose?.({ stage: "pull-write", file: remoteShas[p], total: bytes.length });
-		await writeVaultFile(adapter, p, bytes);
-		bytes = undefined;
+		const size = sizes.get(p)!;
+		if (opts.largeFiles && size > opts.largeFiles.threshold) {
+			await opts.largeFiles.pull({ path: p, commit: remoteCommit, sha: remoteShas[p], size, localSha: localShas[p] });
+		} else {
+			let bytes: Uint8Array | undefined = await getBlob(owner, repo, remoteShas[p], token);
+			await opts.diagnose?.({ stage: "pull-write", file: remoteShas[p], total: bytes.length });
+			await writeVaultFile(adapter, p, bytes);
+			bytes = undefined;
+		}
 		await opts.diagnose?.({ stage: "pull-done", file: remoteShas[p] });
 		result.pulled.push(p);
 		pullCount++;
