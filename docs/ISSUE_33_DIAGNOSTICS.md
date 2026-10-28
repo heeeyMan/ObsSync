@@ -162,3 +162,27 @@ References:
 - https://docs.github.com/en/rest/git/blobs
 - https://github.com/obsidianmd/obsidian-api/blob/master/obsidian.d.ts
 - https://github.com/heeeyMan/ObsSync/issues/33#issuecomment-6443659565
+
+## Test candidate 0.2.27-issue33.3
+
+Diagnostics are mandatory only for this exact prerelease version, including
+existing installations with diagnostics disabled. The stable build remains opt-in.
+The diagnostic viewer includes a live activity snapshot at the moment it is opened
+(syncing flag, current stage, total elapsed time, seconds since last event).
+Reopen the viewer to refresh it. Every 5 seconds the progress notice updates elapsed
+and last-event time; the timer is not evidence of byte progress. UI ticks are not
+written to the bounded journal, so a hung operation cannot evict its last events.
+
+Conflict tracing covers content loading, waiting for a choice, submitting choices,
+local writes, fetching head/tree, uploading blobs, creating tree/commit, updating
+the branch, and saving the baseline. No conflict content or paths are recorded.
+Conflict loading/commit failures now reach the outer Sync error handler rather
+than being reported as a successful return. The conflict algorithm is unchanged.
+
+For the reporter: preserve current vault/settings and back up local-only notes,
+update the frozen BRAT version to .3, leave auto/startup sync off, and run ordinary
+Sync once. Review conflict choices explicitly. If the same step remains for several
+minutes, collect diagnostics while it is still pending, before restarting. A
+crash report should be collected immediately after reopening, before another Sync.
+Do not share data.json or diagnostics/transfer. Native Android validation remains
+pending; this build diagnoses the reported stall, not a confirmed fix for it.

@@ -26,13 +26,42 @@ import { ErrorDetailModal, SyncErrorInfo } from "./error-modal";
 import { getCurrentLanguage, setLanguage, t } from "./i18n";
 import { createSyncAdapter } from "./obsidian-fs";
 
-import { SyncDiagnostics } from "./sync-diagnostics";
+import { DiagnosticEvent, SyncDiagnostics } from "./sync-diagnostics";
 import { ChunkedSync } from "./chunked-sync";
 import { downloadInChunks } from "./chunked-download";
 
 export default class GitSyncPlugin extends Plugin {
 	settings!: GitSyncSettings;
 	private diagnostics!: SyncDiagnostics;
+	private activityTimer: number | null = null;
+	private activityNotice: Notice | null = null;
+	private activityMessage = "";
+	private activityStage = "idle";
+	private activityAt = 0;
+	private syncStartedAt = 0;
+	private syncEndedAt = 0;
+
+	private diagnosticsEnabled(): boolean {
+		return this.manifest.version === "0.2.27-issue33.3" || this.settings.diagnosticsEnabled;
+	}
+
+	private async recordSyncDiagnostic(event: DiagnosticEvent): Promise<void> {
+		this.activityStage = event.stage;
+		this.activityAt = Date.now();
+		if (this.diagnosticsEnabled()) await this.diagnostics.record(event);
+	}
+
+	private updateActivity(message: string, notice: Notice | null = this.activityNotice) {
+		this.activityMessage = message;
+		this.activityNotice = notice;
+		notice?.setMessage("Git Vault Sync: " + message);
+	}
+
+	private activitySnapshot() {
+		return { syncing: this.syncing, diagnosticsEnabled: this.diagnosticsEnabled(),
+			stage: this.activityStage, elapsedSeconds: this.syncStartedAt ? Math.floor(((this.syncEndedAt || Date.now()) - this.syncStartedAt) / 1000) : 0,
+			secondsSinceLastEvent: this.activityAt ? Math.floor(((this.syncEndedAt || Date.now()) - this.activityAt) / 1000) : 0 };
+	}
 	git!: GitManager;
 	private statusBarEl!: HTMLElement;
 	private statusIconEl!: HTMLElement;
@@ -127,6 +156,8 @@ export default class GitSyncPlugin extends Plugin {
 	}
 
 	onunload() {
+		if (this.activityTimer !== null) window.clearInterval(this.activityTimer);
+		this.activityNotice?.hide();
 		if (this.autoSyncTimer !== null) window.clearInterval(this.autoSyncTimer);
 		if (this.statusRefreshTimer !== null)
 			window.clearTimeout(this.statusRefreshTimer);
@@ -176,6 +207,7 @@ export default class GitSyncPlugin extends Plugin {
 
 	private registerLocalizedCommands() {
 		this.addCommand({ id: "toggle-diagnostics", name: t("cmdDiagnosticsToggle"), callback: () => {
+			if (this.manifest.version === "0.2.27-issue33.3") { new Notice(t("diagnosticsAutomatic")); return; }
 			this.settings.diagnosticsEnabled = !this.settings.diagnosticsEnabled;
 			void this.saveSettings().then(() => new Notice(t(this.settings.diagnosticsEnabled ? "diagnosticsOn" : "diagnosticsOff")));
 		} });
@@ -186,7 +218,7 @@ export default class GitSyncPlugin extends Plugin {
 			report.readOnly = true;
 			report.rows = 20;
 			report.style.width = "100%";
-			report.value = JSON.stringify({ environment: { plugin: this.manifest.version, mobile: Platform.isMobile,
+			report.value = JSON.stringify({ activity: this.activitySnapshot(), environment: { plugin: this.manifest.version, mobile: Platform.isMobile,
 				userAgent: navigator.userAgent }, ...JSON.parse(this.diagnostics.report()) }, null, 2);
 			modal.open();
 		} });
@@ -341,16 +373,24 @@ export default class GitSyncPlugin extends Plugin {
 			!silent && Platform.isMobile
 				? new Notice("Git Vault Sync: " + t("statusSyncing"), 0)
 				: null;
+		this.syncStartedAt = Date.now();
+		this.syncEndedAt = 0;
+		this.updateActivity(t("statusSyncing"), progressNotice);
+		this.activityTimer = window.setInterval(() => {
+			const state = this.activitySnapshot();
+			this.activityNotice?.setMessage("Git Vault Sync: " + this.activityMessage + "\n" +
+				t("syncActivity", { elapsed: state.elapsedSeconds, idle: state.secondsSinceLastEvent }));
+		}, 5000);
 		try {
-			if (this.settings.diagnosticsEnabled) await this.diagnostics.record({ stage: "sync-start" });
+			await this.recordSyncDiagnostic({ stage: "sync-start" });
 			if (this.effectiveEngine() === "api") {
 				await this.syncApi(silent, only, progressNotice);
 			} else {
 				await this.syncGit(silent, only, progressNotice);
 			}
-			if (this.settings.diagnosticsEnabled) await this.diagnostics.record({ stage: "sync-returned" });
+			await this.recordSyncDiagnostic({ stage: "sync-returned" });
 		} catch (err) {
-			if (this.settings.diagnosticsEnabled) await this.diagnostics.record({ stage: "sync-failed" }).catch(() => {});
+			await this.recordSyncDiagnostic({ stage: "sync-failed" }).catch(() => {});
 			if (err instanceof MergeConflict) {
 				console.warn("Git Vault Sync merge conflict", err.files);
 				if (silent) {
@@ -386,6 +426,10 @@ export default class GitSyncPlugin extends Plugin {
 			// Always tear down the progress Notice — including the conflict
 			// path, so it's gone before the ConflictModal opens.
 			progressNotice?.hide();
+			if (this.activityTimer !== null) window.clearInterval(this.activityTimer);
+			this.activityTimer = null;
+			this.syncEndedAt = Date.now();
+			this.activityNotice = null;
 			this.syncing = false;
 			await this.refreshStatus();
 		}
@@ -405,7 +449,7 @@ export default class GitSyncPlugin extends Plugin {
 			await this.app.vault.adapter.exists(`${this.diagnostics.dir}/transfer/previous.bin`)) throw new Error(t("errChunkRecovery"));
 		const result = await this.git.sync((msg) => {
 			this.statusTextEl.setText(msg);
-			progressNotice?.setMessage("Git Vault Sync: " + msg);
+			this.updateActivity(msg, progressNotice);
 		}, only);
 		await this.markSynced();
 		const parts: string[] = [];
@@ -506,12 +550,12 @@ export default class GitSyncPlugin extends Plugin {
 			.join(new Date().toISOString());
 
 		const syncAdapter = createSyncAdapter(this.app.vault);
-		const diagnose = this.settings.diagnosticsEnabled ? (event: import("./sync-diagnostics").DiagnosticEvent) => this.diagnostics.record(event) : async () => {};
+		const diagnose = (event: DiagnosticEvent) => this.recordSyncDiagnostic(event);
 		const largeFiles = new ChunkedSync({ adapter: syncAdapter, dir: `${this.diagnostics.dir}/transfer`,
 			...parsed, token, excluded, diagnose, onProgress: (bytes, total) => {
 				const message = t("chunkTestProgress", { done: bytes, total });
 				this.statusTextEl.setText(message);
-				progressNotice?.setMessage(message);
+				this.updateActivity(message, progressNotice);
 			} });
 		await largeFiles.recover();
 
@@ -523,12 +567,12 @@ export default class GitSyncPlugin extends Plugin {
 			adapter: syncAdapter,
 			largeFiles,
 			baseline: this.settings.apiBaseline,
-			diagnose: this.settings.diagnosticsEnabled ? event => this.diagnostics.record(event) : undefined,
+			diagnose,
 			excluded,
 			message,
 			onProgress: (msg) => {
 				this.statusTextEl.setText(msg);
-				progressNotice?.setMessage("Git Vault Sync: " + msg);
+				this.updateActivity(msg, progressNotice);
 			},
 		});
 
@@ -551,6 +595,8 @@ export default class GitSyncPlugin extends Plugin {
 				})
 			);
 		}
+
+		await this.recordSyncDiagnostic({ stage: "sync-files-complete", total: result.conflicts.length });
 
 		// Interactive conflict resolution. Non-conflicting changes were already
 		// applied above; here the user picks a winner per clashing file.
@@ -798,12 +844,17 @@ export default class GitSyncPlugin extends Plugin {
 		// Lazily fetch both sides' bytes for each conflict (one blob at a time;
 		// the local file is already on disk). null = deleted on that side.
 		const files: ApiConflictFile[] = [];
+		const loadingNotice = new Notice(t("apiSyncResolving"), 0);
+		this.updateActivity(t("apiSyncResolving"), loadingNotice);
 		try {
+			await this.recordSyncDiagnostic({ stage: "conflict-load-start", total: conflicts.length });
 			for (const c of conflicts) {
+				await this.recordSyncDiagnostic({ stage: "conflict-load-remote", total: files.length });
 				const remoteContent =
 					c.remoteSha !== null
 						? await getBlob(owner, repo, c.remoteSha, token)
 						: null;
+				await this.recordSyncDiagnostic({ stage: "conflict-load-local", total: files.length });
 				const localContent = c.localDeleted
 					? null
 					: new Uint8Array(await adapter.readBinary(c.path));
@@ -811,13 +862,19 @@ export default class GitSyncPlugin extends Plugin {
 			}
 		} catch (err) {
 			const e = err as Error;
+			await this.recordSyncDiagnostic({ stage: "conflict-load-failed" }).catch(() => {});
 			console.error("Git Vault Sync: loading conflict content failed", err);
 			new Notice(
 				t("apiSyncResolveFailed", { msg: e?.message ?? String(err) })
 			);
-			return;
+			throw err;
+		} finally {
+			loadingNotice.hide();
+			this.activityNotice = null;
 		}
 
+		await this.recordSyncDiagnostic({ stage: "conflict-await-choice", total: files.length });
+		this.activityNotice = null;
 		// Open the modal and await the user's decision via the callbacks.
 		const resolved = await new Promise<Map<string, Uint8Array | null> | null>(
 			(resolve) => {
@@ -836,13 +893,17 @@ export default class GitSyncPlugin extends Plugin {
 		);
 
 		if (!resolved) {
+			await this.recordSyncDiagnostic({ stage: "conflict-cancelled" });
 			new Notice(t("apiSyncResolveCancelled"));
 			return;
 		}
 
 		const resolveNotice = new Notice(t("apiSyncResolving"), 0);
+		this.updateActivity(t("apiSyncResolving"), resolveNotice);
 		try {
+			await this.recordSyncDiagnostic({ stage: "conflict-submit", total: resolved.size });
 			const res = await commitResolutions({
+				diagnose: event => this.recordSyncDiagnostic(event),
 				owner,
 				repo,
 				branch,
@@ -858,22 +919,27 @@ export default class GitSyncPlugin extends Plugin {
 				// onProgress (e.g. t("progPushing")); just prefix it the same way
 				// syncApi does, instead of re-wrapping it through another t() key.
 				onProgress: (msg) =>
-					resolveNotice.setMessage("Git Vault Sync: " + msg),
+					this.updateActivity(msg, resolveNotice),
 			});
 
 			// Persist the updated baseline so resolved paths are now in sync.
 			this.settings.apiBaseline = res.newBaseline;
+			await this.recordSyncDiagnostic({ stage: "conflict-save-baseline" });
 			await this.saveSettings();
+			await this.recordSyncDiagnostic({ stage: "conflict-complete" });
 
 			new Notice(t("apiSyncResolved", { n: resolved.size }), 10_000);
 		} catch (err) {
 			const e = err as Error;
+			await this.recordSyncDiagnostic({ stage: "conflict-failed" }).catch(() => {});
 			console.error("Git Vault Sync: commitResolutions failed", err);
 			new Notice(
 				t("apiSyncResolveFailed", { msg: e?.message ?? String(err) })
 			);
+			throw err;
 		} finally {
 			resolveNotice.hide();
+			this.activityNotice = null;
 		}
 	}
 

@@ -8,6 +8,8 @@ export type Lang = "en" | "ru";
 export type LangPref = "auto" | Lang;
 
 const STRINGS: Record<string, Record<Lang, string>> = {
+	diagnosticsAutomatic: { en: "Diagnostics are always enabled in this test build.", ru: "В этой тестовой сборке диагностика включена автоматически." },
+	syncActivity: { en: "Elapsed: {elapsed}s. Last recorded activity: {idle}s ago. This timer does not confirm transfer progress. If unchanged for several minutes, collect sync diagnostics.", ru: "Прошло: {elapsed} с. Последнее событие: {idle} с назад. Таймер не подтверждает передачу данных. Если изменений нет несколько минут, сохраните диагностику." },
 	errChunkLocalChanged: { en: "A local file changed during download. Sync stopped to preserve your edits; please retry.", ru: "Локальный файл изменился во время загрузки. Синхронизация остановлена для сохранения правок; повторите попытку." },
 	errChunkLocalStream: { en: "Obsidian could not stream a local file. Sync stopped; collect the diagnostic report.", ru: "Obsidian не смог прочитать локальный файл потоком. Синхронизация остановлена; сохраните диагностический отчёт." },
 	errChunkRecovery: { en: "An interrupted file replacement needs attention. Both copies were preserved in the vault/plugin transfer directory. Collect diagnostics before retrying.", ru: "Не удалось безопасно завершить прерванную замену файла. Копии сохранены в хранилище/папке transfer плагина. Сохраните диагностику перед повтором." },

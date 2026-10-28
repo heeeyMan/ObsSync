@@ -1118,8 +1118,9 @@ export async function commitResolutions(opts: {
 	resolved: Array<{ path: string; content: Uint8Array | null }>;
 	message?: string;
 	onProgress?: (msg: string) => void;
+	diagnose?: Diagnose;
 }): Promise<{ committed: boolean; newBaseline: ApiSyncBaseline }> {
-	const { owner, repo, branch, token, adapter, baseline, resolved, onProgress } = opts;
+	const { owner, repo, branch, token, adapter, baseline, resolved, onProgress, diagnose } = opts;
 
 	// No resolutions → nothing to write, commit, or change in the baseline.
 	if (resolved.length === 0) {
@@ -1129,6 +1130,7 @@ export async function commitResolutions(opts: {
 	// 1. Write resolutions to disk first (working tree == what we'll commit).
 	onProgress?.(t("progMerging"));
 	for (const r of resolved) {
+		await diagnose?.({ stage: "conflict-write-local" });
 		if (r.content !== null) {
 			await writeVaultFile(adapter, r.path, r.content);
 		} else {
@@ -1138,6 +1140,7 @@ export async function commitResolutions(opts: {
 
 	// 2. Re-read the live remote head so we build on top of the current tip.
 	onProgress?.(t("progFetching"));
+	await diagnose?.({ stage: "conflict-fetch-head" });
 	const { commitSha: remoteCommit, treeSha: remoteTree } = await getBranchHead(
 		owner,
 		repo,
@@ -1148,6 +1151,7 @@ export async function commitResolutions(opts: {
 	// truncated tree just means some paths fall back to the 100644 default.
 	const remoteModes: Record<string, string> = {};
 	try {
+		await diagnose?.({ stage: "conflict-fetch-tree" });
 		const { entries } = await getTree(owner, repo, remoteTree, token);
 		for (const e of entries) if (e.path) remoteModes[e.path] = e.mode;
 	} catch {
@@ -1164,6 +1168,7 @@ export async function commitResolutions(opts: {
 	for (const r of resolved) {
 		if (r.content !== null) {
 			let bytes: Uint8Array | undefined = r.content;
+			await diagnose?.({ stage: "conflict-upload-blob", bytes: bytes.byteLength, total: pushCount });
 			const sha = await createBlob(owner, repo, token, bytes);
 			bytes = undefined;
 			treeEntries.push({ path: r.path, sha, mode: remoteModes[r.path] });
@@ -1178,10 +1183,15 @@ export async function commitResolutions(opts: {
 		}
 	}
 
+	await diagnose?.({ stage: "conflict-create-tree" });
 	const newTree = await createTree(owner, repo, token, remoteTree, treeEntries);
 	const message = opts.message && opts.message.trim() ? opts.message : "GitSync";
+	await diagnose?.({ stage: "conflict-create-commit" });
 	const newCommit = await createCommit(owner, repo, token, message, newTree, remoteCommit);
+	await diagnose?.({ stage: "conflict-update-ref" });
 	await updateRef(owner, repo, token, branch, newCommit, false);
+
+	await diagnose?.({ stage: "conflict-remote-complete" });
 
 	// 4. Rebuild the baseline: keep everything from the prior baseline, then
 	//    apply the resolved paths (new sha, or removed when deleted).
