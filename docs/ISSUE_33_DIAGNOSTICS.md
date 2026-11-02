@@ -240,3 +240,30 @@ paths or credentials. No Git reset, merge repair, or migration is performed.
 Default engine regression tests require no historical Git refs; --history is a
 local investigation option for full repository clones. An exact reproduction on
 a copy of the preserved Windows vault remains outstanding.
+
+## .5 conflict completion follow-up
+
+The .4 Windows report confirms runEngine=api and no visible UnmergedPathsError,
+but 55 conflicts were loaded. conflict-await-choice to conflict-cancelled took
+about 54 seconds; the reporter saw no dialog and did not intentionally cancel:
+https://github.com/heeeyMan/ObsSync/issues/33#issuecomment-6575768807
+
+Sync now persists apiConflictsPending before presenting conflict UI and only
+updates lastSyncAt/reports success after all conflicts are resolved. Closing
+without a decision records sync-conflicts-pending, leaves the last success time
+unchanged, shows an incomplete notice and conflict status, and suppresses silent
+retries until a manual Sync. A manual Sync recomputes conflicts from current
+state instead of reusing potentially stale file content. The flag survives
+restart and clears on successful resolution or when a new scan finds no conflicts.
+
+API modal opening closes the settings pane and waits for teardown, matching the
+existing Git-modal sequencing. Lifecycle events distinguish modal-open, rendered,
+submit, close-resolved and close-unresolved. Rendered means the rendering routine
+completed, not proof the user could see the window. No event claims user intent.
+The actual cause of the unseen dialog remains unproven. Conflict content is still
+loaded in full; this patch does not address memory use across many conflicts.
+
+Tests exercise cancellation without success, stored pending state, manual retry,
+silent deferral, no-conflict completion, and ordering settings close before modal
+open. Keep original Windows vault and working Android setup intact; test .5 only
+in the previously isolated Windows copy/branch with diagnostics enabled.

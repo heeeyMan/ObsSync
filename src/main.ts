@@ -40,6 +40,7 @@ export default class GitSyncPlugin extends Plugin {
 	private activityAt = 0;
 	private syncStartedAt = 0;
 	private syncEndedAt = 0;
+	private unloaded = false;
 	private runEngine: "git" | "api" | null = null;
 
 	private diagnosticsEnabled(): boolean {
@@ -157,6 +158,7 @@ export default class GitSyncPlugin extends Plugin {
 	}
 
 	onunload() {
+		this.unloaded = true;
 		if (this.activityTimer !== null) window.clearInterval(this.activityTimer);
 		this.activityNotice?.hide();
 		if (this.autoSyncTimer !== null) window.clearInterval(this.autoSyncTimer);
@@ -363,6 +365,7 @@ export default class GitSyncPlugin extends Plugin {
 	 * "nothing to do" chatter and credential prompts.
 	 */
 	async sync(silent = false, only?: string[]): Promise<void> {
+		if (silent && this.effectiveEngine() === "api" && this.settings.apiConflictsPending) return;
 		if (this.syncing || this.conflictActive) {
 			if (!silent) new Notice(t("noticeInProgress"));
 			return;
@@ -402,7 +405,7 @@ export default class GitSyncPlugin extends Plugin {
 			} else {
 				await this.syncGit(silent, only, progressNotice);
 			}
-			await this.recordSyncDiagnostic({ stage: "sync-returned" });
+			await this.recordSyncDiagnostic({ stage: engine === "api" && this.settings.apiConflictsPending ? "sync-conflicts-pending" : "sync-returned" });
 		} catch (err) {
 			await this.recordSyncDiagnostic({ stage: "sync-failed", engine, selectedEngine }).catch(() => {});
 			if (err instanceof MergeConflict) {
@@ -591,43 +594,34 @@ export default class GitSyncPlugin extends Plugin {
 			},
 		});
 
-		// Persist the new baseline so the next sync diffs against the state we
-		// just agreed on. Only reached on success (apiSync didn't throw).
+		// Save completed non-conflicting work, but do not mark the whole sync
+		// successful until every conflict has been resolved.
 		this.settings.apiBaseline = result.newBaseline;
+		this.settings.apiConflictsPending = result.conflicts.length > 0;
 		await this.saveSettings();
+		await this.recordSyncDiagnostic({ stage: "sync-files-complete", total: result.conflicts.length });
+		if (result.conflicts.length > 0) {
+			progressNotice?.hide();
+			this.activityNotice = null;
+			if (silent) {
+				await this.recordSyncDiagnostic({ stage: "conflict-deferred", total: result.conflicts.length });
+				return;
+			}
+			const resolved = await this.resolveApiConflicts(parsed.owner, parsed.repo, branch, token, result.conflicts, message);
+			if (!resolved) {
+				new Notice(t("apiConflictsPending"), 15000);
+				return;
+			}
+			this.settings.apiConflictsPending = false;
+		}
 		await this.markSynced();
-
 		const parts: string[] = [];
 		if (result.committed) parts.push(t("resultCommitted"));
 		if (result.pulled.length) parts.push(t("resultPulled"));
 		if (result.pushed.length) parts.push(t("resultPushed"));
-		if (parts.length || !silent) {
-			new Notice(
-				t("noticeResult", {
-					parts: parts.length
-						? parts.join(", ")
-						: t("resultUpToDate"),
-				})
-			);
-		}
-
-		await this.recordSyncDiagnostic({ stage: "sync-files-complete", total: result.conflicts.length });
-
-		// Interactive conflict resolution. Non-conflicting changes were already
-		// applied above; here the user picks a winner per clashing file.
-		if (result.conflicts.length > 0) {
-			// Tear down the sync progress Notice so it isn't left behind the
-			// modal (sync's finally also hides it, but it's gone earlier here).
-			progressNotice?.hide();
-			await this.resolveApiConflicts(
-				parsed.owner,
-				parsed.repo,
-				branch,
-				token,
-				result.conflicts,
-				message
-			);
-		}
+		if (parts.length || !silent) new Notice(t("noticeResult", {
+			parts: parts.length ? parts.join(", ") : t("resultUpToDate"),
+		}));
 	}
 
 	private openReview() {
@@ -853,7 +847,7 @@ export default class GitSyncPlugin extends Plugin {
 		token: string,
 		conflicts: ConflictInfo[],
 		message: string
-	): Promise<void> {
+	): Promise<boolean> {
 		const adapter = createSyncAdapter(this.app.vault);
 
 		// Lazily fetch both sides' bytes for each conflict (one blob at a time;
@@ -890,6 +884,12 @@ export default class GitSyncPlugin extends Plugin {
 
 		await this.recordSyncDiagnostic({ stage: "conflict-await-choice", total: files.length });
 		this.activityNotice = null;
+		// Match the Git modal's teardown sequencing: settings can otherwise cover
+		// the newly opened dialog. This is not proof of the reporter's close cause.
+		this.closeSettingsTab();
+		await new Promise<void>(resolve => window.setTimeout(resolve, 200));
+		if (this.unloaded) return false;
+		let lifecycle = Promise.resolve();
 		// Open the modal and await the user's decision via the callbacks.
 		const resolved = await new Promise<Map<string, Uint8Array | null> | null>(
 			(resolve) => {
@@ -899,6 +899,9 @@ export default class GitSyncPlugin extends Plugin {
 					(map) => resolve(map),
 					() => resolve(null)
 				);
+				modal.onLifecycle = stage => {
+					lifecycle = lifecycle.then(() => this.recordSyncDiagnostic({ stage })).catch(() => {});
+				};
 				this.currentModal = modal;
 				modal.onCloseHook = () => {
 					if (this.currentModal === modal) this.currentModal = null;
@@ -907,10 +910,11 @@ export default class GitSyncPlugin extends Plugin {
 			}
 		);
 
+		await lifecycle;
 		if (!resolved) {
 			await this.recordSyncDiagnostic({ stage: "conflict-cancelled" });
 			new Notice(t("apiSyncResolveCancelled"));
-			return;
+			return false;
 		}
 
 		const resolveNotice = new Notice(t("apiSyncResolving"), 0);
@@ -944,6 +948,7 @@ export default class GitSyncPlugin extends Plugin {
 			await this.recordSyncDiagnostic({ stage: "conflict-complete" });
 
 			new Notice(t("apiSyncResolved", { n: resolved.size }), 10_000);
+			return true;
 		} catch (err) {
 			const e = err as Error;
 			await this.recordSyncDiagnostic({ stage: "conflict-failed" }).catch(() => {});
@@ -976,7 +981,7 @@ export default class GitSyncPlugin extends Plugin {
 		if (this.syncing) return;
 		// A parked silent conflict takes priority: keep prompting the user to
 		// resolve it (tap the status bar) until they do.
-		if (this.pendingConflict) {
+		if (this.pendingConflict || (this.effectiveEngine() === "api" && this.settings.apiConflictsPending)) {
 			this.setStatus("conflict");
 			return;
 		}

@@ -40,7 +40,7 @@ try {
    if(a.path==='obsidian')return {path:a.path,namespace:'mock'};
    if(a.importer===resolve('src/main.ts')&&!['./i18n','./sync-diagnostics'].includes(a.path))return {path:a.path,namespace:'mock'};
   });
-  b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents: a.path==='obsidian'?`export class Plugin {} export class Modal {} export class Menu {} export const Platform={isMobile:true}; export function setIcon(){} export function setTooltip(){} export class Notice { constructor(message){this.message=message;globalThis.notices.push(this);} setMessage(m){this.message=m;} hide(){this.hidden=true;} }` : a.path==='./github-sync'?`export const commitResolutions=(o)=>globalThis.commitMock(o); export const getBlob=()=>globalThis.blobMock(); export const apiSync=()=>{}; export const getBranchHead=()=>{}; export const getTree=()=>{}; export const parseGitHubRepo=()=>{};` : a.path==='./api-conflict-modal'?`export class ApiConflictModal { constructor(app,files,done){this.done=done;} open(){this.done(new Map([['note.md',new Uint8Array([65])]]));} }` : a.path==='./obsidian-fs'?`export const createSyncAdapter=()=>({readBinary:async()=>new ArrayBuffer(1)});` : a.path==='./settings'?`export const DEFAULT_SETTINGS={}; export class GitSyncSettingTab {}` : a.path==='./git'?`export class MergeConflict extends Error {} export class GitManager {} export const buildUserExcludeMatcher=()=>{}; export const parseGitignore=()=>{};` : a.path==='./conflict-modal'?`export class ConflictModal {}` : a.path==='./review-modal'?`export class ReviewModal {}` : a.path==='./error-modal'?`export class ErrorDetailModal {}` : a.path==='./chunked-sync'?`export class ChunkedSync {}` : `export const downloadInChunks=()=>{};` }));
+  b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents: a.path==='obsidian'?`export class Plugin {} export class Modal {} export class Menu {} export const Platform={isMobile:true}; export function setIcon(){} export function setTooltip(){} export class Notice { constructor(message){this.message=message;globalThis.notices.push(this);} setMessage(m){this.message=m;} hide(){this.hidden=true;} }` : a.path==='./github-sync'?`export const commitResolutions=(o)=>globalThis.commitMock(o); export const getBlob=()=>globalThis.blobMock(); export const apiSync=()=>globalThis.apiResult(); export const getBranchHead=()=>{}; export const getTree=()=>{}; export const parseGitHubRepo=()=>({owner:"owner",repo:"repo"});` : a.path==='./api-conflict-modal'?`export class ApiConflictModal { constructor(app,files,done,cancel){this.done=done;this.cancel=cancel;} open(){globalThis.modalOpenedAt=Date.now();this.onLifecycle?.("conflict-modal-open");if(globalThis.cancelModal){this.onLifecycle?.("conflict-modal-close-unresolved");this.onCloseHook?.();this.cancel();return;}this.done(new Map([['note.md',new Uint8Array([65])]]));} }` : a.path==='./obsidian-fs'?`export const createSyncAdapter=()=>({readBinary:async()=>new ArrayBuffer(1)});` : a.path==='./settings'?`export const DEFAULT_SETTINGS={}; export class GitSyncSettingTab {}` : a.path==='./git'?`export class MergeConflict extends Error {} export class GitManager {} export const buildUserExcludeMatcher=()=>{}; export const parseGitignore=()=>{};` : a.path==='./conflict-modal'?`export class ConflictModal {}` : a.path==='./review-modal'?`export class ReviewModal {}` : a.path==='./error-modal'?`export class ErrorDetailModal {}` : a.path==='./chunked-sync'?`export class ChunkedSync {async recover(){}}` : `export const downloadInChunks=()=>{};` }));
  }}]});
  const {default:Plugin}=await import(pluginOut);
  const plugin=new Plugin();plugin.manifest={version:'0.2.27'};plugin.settings={diagnosticsEnabled:false,remoteUrl:'repo',token:'SECRET',apiBaseline:{}};plugin.app={};
@@ -55,7 +55,7 @@ try {
  let tick;const originalSetInterval=window.setInterval;
  window.setInterval=(fn,ms)=>{tick=fn;return originalSetInterval(fn,ms);};
  let finish;globalThis.commitMock=()=>new Promise(r=>{finish=r;});records=[];
- const active=plugin.sync();for(let i=0;i<20&&!finish;i++)await new Promise(r=>setTimeout(r,0));
+ const active=plugin.sync();for(let i=0;i<500&&!finish;i++)await new Promise(r=>setTimeout(r,0));
  assert.ok(finish);const before=records.length;plugin.activityAt=Date.now()-125000;tick();
  assert.equal(records.length,before,'UI heartbeat must not overwrite journal evidence');
  assert.ok(notices.some(n=>!n.hidden&&n.message.includes('125s')));
@@ -67,5 +67,26 @@ try {
  plugin.settings.diagnosticsEnabled=false;records=[];globalThis.blobMock=async()=>new Uint8Array([1]);globalThis.commitMock=async()=>({newBaseline:{}});
  await plugin.sync();assert.equal(records.length,0,'disabling diagnostics stops subsequent journal writes');
  plugin.manifest.version='0.2.27-issue33.3';assert.equal(plugin.diagnosticsEnabled(),false,'no version-based override remains');
+ // Exercise the real syncApi orchestration, including final success accounting.
+ delete plugin.syncApi;plugin.settings.diagnosticsEnabled=true;plugin.settings.lastSyncAt=123;
+ plugin.app={vault:{adapter:{exists:async()=>false},configDir:'.obsidian'}};
+ let closedAt=0;plugin.closeSettingsTab=()=>{closedAt=Date.now();};
+ globalThis.apiResult=()=>({newBaseline:{shas:{}},conflicts:[{path:'note.md',remoteSha:'a',localDeleted:false}],pulled:['a'],pushed:[],committed:false});
+ globalThis.cancelModal=true;records=[];globalThis.notices=[];
+ await plugin.sync();assert.equal(plugin.settings.lastSyncAt,123);assert.equal(plugin.settings.apiConflictsPending,true);
+ assert.equal(records.at(-1).stage,'sync-conflicts-pending');
+ assert.ok(records.some(e=>e.stage==='conflict-modal-close-unresolved'));
+ assert.ok(globalThis.modalOpenedAt-closedAt>=190,'settings teardown before modal open');
+ assert.ok(notices.some(n=>n.message.includes('Sync is incomplete')));
+ const count=records.length;await plugin.sync(true);assert.equal(records.length,count,'automatic retry waits for user');
+ globalThis.cancelModal=false;records=[];await plugin.sync();
+ assert.equal(plugin.settings.apiConflictsPending,false);assert.ok(plugin.settings.lastSyncAt>123);
+ assert.equal(records.at(-1).stage,'sync-returned');
+ // Silent detection persists pending state without opening a modal or marking success.
+ plugin.settings.lastSyncAt=123;globalThis.modalOpenedAt=0;records=[];await plugin.sync(true);
+ assert.equal(plugin.settings.apiConflictsPending,true);assert.equal(plugin.settings.lastSyncAt,123);assert.equal(globalThis.modalOpenedAt,0);
+ globalThis.apiResult=()=>({newBaseline:{shas:{}},conflicts:[],pulled:[],pushed:[],committed:false});
+ await plugin.sync();assert.equal(plugin.settings.apiConflictsPending,false);assert.ok(plugin.settings.lastSyncAt>123);
+ console.log('PASS cancellation preserves last success, pending state, manual retry, silent deferral, delayed modal open');
  console.log('PASS diagnostics opt-in and disabling, live activity without journaling, success/failure propagation, timer cleanup');
 } finally {await rm(dir,{recursive:true,force:true});}

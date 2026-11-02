@@ -34,7 +34,7 @@ export class SyncDiagnostics {
 		}
 		try { this.interrupted = JSON.parse(await this.adapter.read(`${this.dir}/interrupted.json`)); } catch { /* First run. */ }
 		const last = this.records[this.records.length - 1];
-		if (last && !["sync-returned", "sync-failed", "prototype-complete", "prototype-failed"].includes(last.stage)) {
+		if (last && !["sync-returned", "sync-conflicts-pending", "sync-failed", "prototype-complete", "prototype-failed"].includes(last.stage)) {
 			this.interrupted = [...this.records];
 			// Preserve the crash context even if automatic sync runs on startup.
 			await this.adapter.write(`${this.dir}/interrupted.json`, JSON.stringify(this.interrupted)).catch(() => {

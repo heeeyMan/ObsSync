@@ -14,6 +14,7 @@ import { LangPref, t } from "./i18n";
 
 export interface GitSyncSettings {
 	diagnosticsEnabled: boolean;
+	apiConflictsPending: boolean;
 	/** HTTPS clone URL of the remote, e.g. https://github.com/user/repo.git */
 	remoteUrl: string;
 	/** Branch to sync against. */
@@ -58,6 +59,7 @@ export interface GitSyncSettings {
 
 export const DEFAULT_SETTINGS: GitSyncSettings = {
 	diagnosticsEnabled: false,
+	apiConflictsPending: false,
 	remoteUrl: "",
 	branch: "main",
 	authorName: "",
