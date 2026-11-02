@@ -70,6 +70,7 @@ export class ApiConflictModal extends Modal {
 	private footer!: HTMLElement;
 	private cleanupKeyboard: () => void = () => {};
 	onCloseHook?: () => void;
+	onLifecycle?: (stage: string) => void;
 
 	constructor(
 		app: App,
@@ -83,6 +84,7 @@ export class ApiConflictModal extends Modal {
 	}
 
 	onOpen() {
+		this.onLifecycle?.("conflict-modal-open");
 		const { contentEl, titleEl, modalEl } = this;
 		// Reuse the git conflict modal's classes so the scroll/footer layout and
 		// styling apply unchanged.
@@ -134,6 +136,7 @@ export class ApiConflictModal extends Modal {
 
 		// Keep the active editor reachable above the on-screen keyboard (mobile).
 		this.cleanupKeyboard = keepModalAboveKeyboard(this.containerEl, modalEl);
+		this.onLifecycle?.("conflict-modal-rendered");
 	}
 
 	/** Show a single conflict step and rebuild the navigation footer for it. */
@@ -256,6 +259,8 @@ export class ApiConflictModal extends Modal {
 	}
 
 	private resolve() {
+		if (this.finished) return;
+		this.onLifecycle?.("conflict-modal-submit");
 		const resolved = new Map<string, Uint8Array | null>();
 		for (const s of this.states) {
 			let content: Uint8Array | null;
@@ -279,6 +284,7 @@ export class ApiConflictModal extends Modal {
 	}
 
 	onClose() {
+		this.onLifecycle?.(this.finished ? "conflict-modal-close-resolved" : "conflict-modal-close-unresolved");
 		this.cleanupKeyboard();
 		this.contentEl.empty();
 		this.onCloseHook?.();

@@ -8,6 +8,26 @@ goes into each commit.
 Git Vault Sync is a pure-JavaScript plugin, so it needs no system `git` and
 works on Android/iOS as well as desktop.
 
+## Large files and diagnostics
+
+The GitHub API engine downloads files larger than 1 MiB in sequential 1 MiB
+ranges and streams local checks for large files. The threshold selects the
+transfer method; large files are not skipped. Downloaded bytes are verified
+before replacing an existing file, with recovery for interrupted replacements.
+This requires Obsidian **1.12.3 or newer**.
+
+This change covers downloads and local scanning. Large-file uploads and conflict
+content still use whole-file buffers. GitHub and device limits still apply; if
+the server ignores a range request or the local resource cannot be streamed,
+sync stops rather than falling back to a full-file download/read.
+
+Use **Enable / disable sync diagnostics** to opt in to persistent diagnostic
+logging; it is off by default. **Show sync diagnostics** displays the saved
+events and a current activity snapshot. Collect a report before retrying a
+failed sync. Review it before sharing, and never share `data.json` (credentials)
+or `diagnostics/transfer/` (vault data). Progress timers show elapsed time, not
+proof of ongoing transfer.
+
 ## Two sync engines
 
 There's a **Sync engine** setting (`Auto` / `Git` / `GitHub API`); `Auto` picks
@@ -15,9 +35,9 @@ the right one per platform:
 
 - **Desktop → Git engine** ([isomorphic-git](https://isomorphic-git.org)): full
   local history and true two-parent merges.
-- **Mobile → GitHub API engine** (Git Data API): transfers files one blob at a
-  time instead of a whole packfile, so it syncs large repos on a phone without
-  running out of memory. Selective sync / commit preview are git-engine only.
+- **Mobile → GitHub API engine** (Git Data API): transfers files individually,
+  with chunked downloads for large files, avoiding whole-packfile downloads.
+  Selective sync / commit preview are git-engine only.
 
 Both push and pull to the same GitHub remote, so all your devices stay in sync.
 

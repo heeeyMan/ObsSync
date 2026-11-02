@@ -8,6 +8,28 @@ export type Lang = "en" | "ru";
 export type LangPref = "auto" | Lang;
 
 const STRINGS: Record<string, Record<Lang, string>> = {
+	apiConflictsPending: { en: "Sync is incomplete: conflicts remain unresolved. Completed file transfers were kept. Run Sync again to review conflicts; automatic sync is paused for this vault until then.", ru: "Синхронизация не завершена: остались конфликты. Переданные файлы сохранены. Запустите Sync снова для проверки конфликтов; до этого автосинхронизация хранилища приостановлена." },
+	engineChangeBusy: { en: "Finish or dismiss the current sync/conflict dialog before changing engines. Changing engines does not resolve Git conflicts.", ru: "Завершите синхронизацию или закройте окно конфликтов перед сменой движка. Смена движка не разрешает Git-конфликты." },
+	errModalHistorical: { en: "This is the last recorded failure. It may belong to an earlier sync or engine, even if a later sync succeeded.", ru: "Это последняя сохранённая ошибка. Она может относиться к прежней синхронизации или другому движку, даже если последующий запуск прошёл успешно." },
+	errModalEngine: { en: "Engine at failure: {engine}; setting at start: {selected}; plugin: {version}", ru: "Движок при ошибке: {engine}; настройка при запуске: {selected}; плагин: {version}" },
+	syncActivity: { en: "Elapsed: {elapsed}s. Last recorded activity: {idle}s ago. This timer does not confirm transfer progress. If unchanged for several minutes, collect sync diagnostics.", ru: "Прошло: {elapsed} с. Последнее событие: {idle} с назад. Таймер не подтверждает передачу данных. Если изменений нет несколько минут, сохраните диагностику." },
+	errChunkLocalChanged: { en: "A local file changed during download. Sync stopped to preserve your edits; please retry.", ru: "Локальный файл изменился во время загрузки. Синхронизация остановлена для сохранения правок; повторите попытку." },
+	errChunkLocalStream: { en: "Obsidian could not stream a local file. Sync stopped; collect the diagnostic report.", ru: "Obsidian не смог прочитать локальный файл потоком. Синхронизация остановлена; сохраните диагностический отчёт." },
+	errChunkRecovery: { en: "An interrupted file replacement needs attention. Both copies were preserved in the vault/plugin transfer directory. Collect diagnostics before retrying.", ru: "Не удалось безопасно завершить прерванную замену файла. Копии сохранены в хранилище/папке transfer плагина. Сохраните диагностику перед повтором." },
+	errChunkTransfer: { en: "Chunked download failed ({code}). The existing file was preserved. See sync diagnostics.", ru: "Загрузка частями не удалась ({code}). Прежний файл сохранён. Откройте диагностику синхронизации." },
+	errChunkIntegrity: { en: "The downloaded file failed its on-disk checksum. The existing file was kept; please retry.", ru: "Контрольная сумма скачанного файла на диске не совпала. Прежний файл сохранён; повторите попытку." },
+	errChunkMetadata: { en: "GitHub returned an invalid file size. Sync stopped before downloading files.", ru: "GitHub вернул некорректный размер файла. Синхронизация остановлена до загрузки файлов." },
+
+	cmdDiagnosticsToggle: { en: "Enable / disable sync diagnostics", ru: "Включить / выключить диагностику синхронизации" },
+	cmdDiagnosticsShow: { en: "Show sync diagnostics", ru: "Показать диагностику синхронизации" },
+	diagnosticsOn: { en: "Sync diagnostics enabled", ru: "Диагностика синхронизации включена" },
+	diagnosticsOff: { en: "Sync diagnostics disabled", ru: "Диагностика синхронизации выключена" },
+	cmdChunkTest: { en: "Test chunked download of largest remote file", ru: "Проверить загрузку крупнейшего файла частями" },
+	chunkTestRunning: { en: "Testing chunked download…", ru: "Проверка загрузки частями…" },
+	chunkTestProgress: { en: "Downloaded {done} / {total} bytes", ru: "Загружено {done} / {total} байт" },
+	chunkTestComplete: { en: "Download verified; test copy removed. See sync diagnostics.", ru: "Загрузка проверена; тестовая копия удалена. Откройте диагностику синхронизации." },
+	chunkTestFailed: { en: "Download test failed. See sync diagnostics for the last completed stage.", ru: "Проверка загрузки завершилась ошибкой. Последний этап сохранён в диагностике синхронизации." },
+
 	// --- ribbon / commands ---
 	ribbonSync: { en: "Git Vault Sync: Sync vault", ru: "Git Vault Sync: синхронизировать хранилище" },
 	ribbonReview: {
