@@ -215,3 +215,28 @@ package-lock and versions.json together (minimum Obsidian 1.12.3), and run relea
 validation on the committed source. Feature preparation keeps version 0.2.27
 per CONTRIBUTING.md; the existing release and its versions.json entry are not
 rewritten. Published .1/.2/.3 release history remains available through BRAT.
+
+## Windows engine investigation
+
+The reporter says API was selected and a conflict dialog preceded
+UnmergedPathsError; no other Git tooling was in use:
+https://github.com/heeeyMan/ObsSync/issues/33#issuecomment-6573933294
+
+`node scripts/repro-issue-33-engine.mjs --history` exercises actual main.ts
+orchestration from c35c4d0 (stable 0.2.27), 67813fa (.3), and working source,
+with UI/engine operations mocked. Both historical sources allow changing the
+engine setting while a Git conflict is parked, then opening that Git conflict
+modal while the setting reads API. Both also retain the last Git error after a
+successful API sync. These reproduce routing/reporting ambiguity, not the
+reporter's actual UnmergedPathsError or its original index state.
+
+The fix rejects engine changes while syncing or while conflict/review UI is
+active, and captures the effective engine before awaited diagnostic I/O. Error
+details retain selected/effective engine and plugin version; the viewer and
+clipboard explain that the saved error may predate a successful sync. Diagnostic
+start/failure events and the activity snapshot include engine context without
+paths or credentials. No Git reset, merge repair, or migration is performed.
+
+Default engine regression tests require no historical Git refs; --history is a
+local investigation option for full repository clones. An exact reproduction on
+a copy of the preserved Windows vault remains outstanding.

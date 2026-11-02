@@ -40,6 +40,7 @@ export default class GitSyncPlugin extends Plugin {
 	private activityAt = 0;
 	private syncStartedAt = 0;
 	private syncEndedAt = 0;
+	private runEngine: "git" | "api" | null = null;
 
 	private diagnosticsEnabled(): boolean {
 		return this.settings.diagnosticsEnabled;
@@ -58,7 +59,7 @@ export default class GitSyncPlugin extends Plugin {
 	}
 
 	private activitySnapshot() {
-		return { syncing: this.syncing, diagnosticsEnabled: this.diagnosticsEnabled(),
+		return { syncing: this.syncing, selectedEngine: this.settings.syncEngine, runEngine: this.runEngine, diagnosticsEnabled: this.diagnosticsEnabled(),
 			stage: this.activityStage, elapsedSeconds: this.syncStartedAt ? Math.floor(((this.syncEndedAt || Date.now()) - this.syncStartedAt) / 1000) : 0,
 			secondsSinceLastEvent: this.activityAt ? Math.floor(((this.syncEndedAt || Date.now()) - this.activityAt) / 1000) : 0 };
 	}
@@ -332,6 +333,17 @@ export default class GitSyncPlugin extends Plugin {
 		return this.settings.syncEngine;
 	}
 
+	/** Engine changes must not redirect a running sync or a parked Git conflict. */
+	async changeSyncEngine(engine: GitSyncSettings["syncEngine"]): Promise<boolean> {
+		if (this.syncing || this.conflictActive || this.pendingConflict || this.currentModal) {
+			new Notice(t("engineChangeBusy"));
+			return false;
+		}
+		this.settings.syncEngine = engine;
+		await this.saveSettings();
+		return true;
+	}
+
 	/** (Re)start the auto-sync timer based on current settings. */
 	applyAutoSync() {
 		if (this.autoSyncTimer !== null) {
@@ -360,6 +372,9 @@ export default class GitSyncPlugin extends Plugin {
 			return;
 		}
 
+		const engine = this.effectiveEngine();
+		const selectedEngine = this.settings.syncEngine;
+		this.runEngine = engine;
 		this.syncing = true;
 		this.lastSyncError = false;
 		this.setStatus("syncing");
@@ -381,15 +396,15 @@ export default class GitSyncPlugin extends Plugin {
 				t("syncActivity", { elapsed: state.elapsedSeconds, idle: state.secondsSinceLastEvent }));
 		}, 5000);
 		try {
-			await this.recordSyncDiagnostic({ stage: "sync-start" });
-			if (this.effectiveEngine() === "api") {
+			await this.recordSyncDiagnostic({ stage: "sync-start", engine, selectedEngine });
+			if (engine === "api") {
 				await this.syncApi(silent, only, progressNotice);
 			} else {
 				await this.syncGit(silent, only, progressNotice);
 			}
 			await this.recordSyncDiagnostic({ stage: "sync-returned" });
 		} catch (err) {
-			await this.recordSyncDiagnostic({ stage: "sync-failed" }).catch(() => {});
+			await this.recordSyncDiagnostic({ stage: "sync-failed", engine, selectedEngine }).catch(() => {});
 			if (err instanceof MergeConflict) {
 				console.warn("Git Vault Sync merge conflict", err.files);
 				if (silent) {
@@ -410,6 +425,7 @@ export default class GitSyncPlugin extends Plugin {
 					message: (err as Error)?.message ?? String(err),
 					detail: describeError(err),
 					when: Date.now(),
+					engine, selectedEngine, pluginVersion: this.manifest.version,
 				};
 				// Silent (auto/startup) sync: stay quiet — a stale token or no
 				// network would otherwise spam a Notice every tick. The sticky

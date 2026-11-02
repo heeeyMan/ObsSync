@@ -8,6 +8,9 @@ export type Lang = "en" | "ru";
 export type LangPref = "auto" | Lang;
 
 const STRINGS: Record<string, Record<Lang, string>> = {
+	engineChangeBusy: { en: "Finish or dismiss the current sync/conflict dialog before changing engines. Changing engines does not resolve Git conflicts.", ru: "Завершите синхронизацию или закройте окно конфликтов перед сменой движка. Смена движка не разрешает Git-конфликты." },
+	errModalHistorical: { en: "This is the last recorded failure. It may belong to an earlier sync or engine, even if a later sync succeeded.", ru: "Это последняя сохранённая ошибка. Она может относиться к прежней синхронизации или другому движку, даже если последующий запуск прошёл успешно." },
+	errModalEngine: { en: "Engine at failure: {engine}; setting at start: {selected}; plugin: {version}", ru: "Движок при ошибке: {engine}; настройка при запуске: {selected}; плагин: {version}" },
 	syncActivity: { en: "Elapsed: {elapsed}s. Last recorded activity: {idle}s ago. This timer does not confirm transfer progress. If unchanged for several minutes, collect sync diagnostics.", ru: "Прошло: {elapsed} с. Последнее событие: {idle} с назад. Таймер не подтверждает передачу данных. Если изменений нет несколько минут, сохраните диагностику." },
 	errChunkLocalChanged: { en: "A local file changed during download. Sync stopped to preserve your edits; please retry.", ru: "Локальный файл изменился во время загрузки. Синхронизация остановлена для сохранения правок; повторите попытку." },
 	errChunkLocalStream: { en: "Obsidian could not stream a local file. Sync stopped; collect the diagnostic report.", ru: "Obsidian не смог прочитать локальный файл потоком. Синхронизация остановлена; сохраните диагностический отчёт." },

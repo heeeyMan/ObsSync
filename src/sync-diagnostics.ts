@@ -3,6 +3,8 @@ import type { DataAdapter } from "obsidian";
 /** No paths, URLs, tokens, content, response headers or exception messages. */
 export interface DiagnosticEvent {
 	stage: string;
+	engine?: "git" | "api";
+	selectedEngine?: "auto" | "git" | "api";
 	file?: string;
 	bytes?: number;
 	total?: number;

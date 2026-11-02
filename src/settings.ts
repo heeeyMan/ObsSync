@@ -352,8 +352,7 @@ export class GitSyncSettingTab extends PluginSettingTab {
 					.addOption("api", t("engineApi"))
 					.setValue(s.syncEngine)
 					.onChange(async (value) => {
-						s.syncEngine = value as GitSyncSettings["syncEngine"];
-						await this.plugin.saveSettings();
+						await this.plugin.changeSyncEngine(value as GitSyncSettings["syncEngine"]);
 						// Re-render so the Initialize row reflects whether the
 						// effective engine is API (where init isn't needed).
 						this.display();
