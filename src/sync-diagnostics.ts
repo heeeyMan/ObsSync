@@ -42,9 +42,9 @@ export class SyncDiagnostics {
 			});
 		}
 	}
-	async record(event: DiagnosticEvent): Promise<void> {
+	async record(event: DiagnosticEvent, occurredAt = Date.now()): Promise<void> {
 		if (!(await this.adapter.exists(this.dir))) await this.adapter.mkdir(this.dir);
-		this.records.push({ ...event, time: new Date().toISOString(), sequence: ++this.sequence });
+		this.records.push({ ...event, time: new Date(occurredAt).toISOString(), sequence: ++this.sequence });
 		this.records = this.records.slice(-80);
 		await this.adapter.write(`${this.dir}/journal-${this.sequence % 2}.json`, JSON.stringify(this.records));
 	}

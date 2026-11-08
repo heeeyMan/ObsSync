@@ -8,6 +8,8 @@ export type Lang = "en" | "ru";
 export type LangPref = "auto" | Lang;
 
 const STRINGS: Record<string, Record<Lang, string>> = {
+	apiReviewAll: { en: "Review each conflict, or explicitly choose local/remote for all, before resolving.", ru: "Просмотрите каждый конфликт либо явно выберите локальную/удалённую версию для всех перед разрешением." },
+	apiPreviewTruncated: { en: "Preview shortened. The selected file content is preserved in full.", ru: "Предпросмотр сокращён. Выбранное содержимое файла сохраняется полностью." },
 	apiConflictsPending: { en: "Sync is incomplete: conflicts remain unresolved. Completed file transfers were kept. Run Sync again to review conflicts; automatic sync is paused for this vault until then.", ru: "Синхронизация не завершена: остались конфликты. Переданные файлы сохранены. Запустите Sync снова для проверки конфликтов; до этого автосинхронизация хранилища приостановлена." },
 	engineChangeBusy: { en: "Finish or dismiss the current sync/conflict dialog before changing engines. Changing engines does not resolve Git conflicts.", ru: "Завершите синхронизацию или закройте окно конфликтов перед сменой движка. Смена движка не разрешает Git-конфликты." },
 	errModalHistorical: { en: "This is the last recorded failure. It may belong to an earlier sync or engine, even if a later sync succeeded.", ru: "Это последняя сохранённая ошибка. Она может относиться к прежней синхронизации или другому движку, даже если последующий запуск прошёл успешно." },

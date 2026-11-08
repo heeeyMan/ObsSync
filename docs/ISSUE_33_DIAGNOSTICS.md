@@ -267,3 +267,28 @@ Tests exercise cancellation without success, stored pending state, manual retry,
 silent deferral, no-conflict completion, and ordering settings close before modal
 open. Keep original Windows vault and working Android setup intact; test .5 only
 in the previously isolated Windows copy/branch with diagnostics enabled.
+
+## .6 lazy conflict UI and event timestamps
+
+The .5 report describes a recoverable UI freeze; unresolved reporting works.
+Its apparent 52-second opening delay and 2ms closure interval cannot locate the
+freeze reliably: lifecycle records were timestamped when their queued writes
+ran, after synchronous rendering. .6 captures event time inside the lifecycle
+callback and passes it through the journal queue. Escape/outside-pointer events
+are logged as input observations, not proof of why the modal closed.
+
+Only the current conflict card is rendered/classified. Binary checks decode
+UTF-8 in 64KiB pieces and reject NUL/invalid data without full binary-to-string
+conversion. Binary/deletion conflicts do not create a text editor. Text previews
+are lazy and shortened to 16KiB with a visible label; selected file bytes remain
+complete. Text edits and choices survive navigation. Submission requires every
+conflict to be visited or an explicit bulk local/remote choice; unseen defaults
+are not silently committed.
+
+Actual modal code is tested with a DOM boundary stub using 55 conflicts and a
+64,931,472-byte binary fixture, plus UTF-8 boundaries, edit preservation, full
+binary identity on submission, deletion choices, cancellation, and delayed
+journal I/O preserving occurrence timestamps. This is not native Windows UI
+validation. Both sides of all conflicts are still fetched before opening, and
+a single large text conflict still uses a full text editor. Original
+UnmergedPathsError and the cause of unexpected closure remain unproven.

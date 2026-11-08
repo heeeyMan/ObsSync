@@ -47,10 +47,10 @@ export default class GitSyncPlugin extends Plugin {
 		return this.settings.diagnosticsEnabled;
 	}
 
-	private async recordSyncDiagnostic(event: DiagnosticEvent): Promise<void> {
+	private async recordSyncDiagnostic(event: DiagnosticEvent, occurredAt = Date.now()): Promise<void> {
 		this.activityStage = event.stage;
-		this.activityAt = Date.now();
-		if (this.diagnosticsEnabled()) await this.diagnostics.record(event);
+		this.activityAt = occurredAt;
+		if (this.diagnosticsEnabled()) await this.diagnostics.record(event, occurredAt);
 	}
 
 	private updateActivity(message: string, notice: Notice | null = this.activityNotice) {
@@ -900,7 +900,8 @@ export default class GitSyncPlugin extends Plugin {
 					() => resolve(null)
 				);
 				modal.onLifecycle = stage => {
-					lifecycle = lifecycle.then(() => this.recordSyncDiagnostic({ stage })).catch(() => {});
+					const occurredAt = Date.now();
+					lifecycle = lifecycle.then(() => this.recordSyncDiagnostic({ stage }, occurredAt)).catch(() => {});
 				};
 				this.currentModal = modal;
 				modal.onCloseHook = () => {
