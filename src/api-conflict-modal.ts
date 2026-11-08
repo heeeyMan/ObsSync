@@ -17,34 +17,34 @@ export interface ApiConflictFile {
 type Choice = "local" | "remote" | "manual";
 
 const TEXT_DECODER = new TextDecoder("utf-8");
-const STRICT_TEXT_DECODER = new TextDecoder("utf-8", { fatal: true });
 const TEXT_ENCODER = new TextEncoder();
 
-/**
- * Content is "binary" (no safe manual text edit) when it isn't lossless UTF-8:
- * an invalid byte sequence or an embedded NUL. Stricter than a bare NUL scan so
- * a NUL-free binary (many PNG/JPG payloads) can't be offered for text editing —
- * saving a decoded string back would replace bad bytes with U+FFFD.
- */
+/** Validate in bounded pieces: binary detection must not allocate a decoded
+ * string as large as an attachment. Streaming preserves UTF-8 boundaries. */
 function looksBinary(bytes: Uint8Array | null): boolean {
 	if (!bytes) return false;
+	const decoder = new TextDecoder("utf-8", { fatal: true });
 	try {
-		return STRICT_TEXT_DECODER.decode(bytes).includes("\u0000");
-	} catch {
-		return true;
-	}
+		for (let i = 0; i < bytes.length; i += 65536) {
+			const part = bytes.subarray(i, i + 65536);
+			if (part.includes(0)) return true;
+			decoder.decode(part, { stream: true });
+		}
+		decoder.decode();
+		return false;
+	} catch { return true; }
 }
 
 interface FileState {
 	file: ApiConflictFile;
 	/** Whether either side is binary — disables the manual-edit option. */
-	binary: boolean;
+	binary?: boolean;
 	/** True if the file was deleted locally / remotely (frames the choices). */
 	localDeleted: boolean;
 	remoteDeleted: boolean;
-	choice: Choice;
+	choice?: Choice;
 	/** Editable text for the "manual" choice; pre-filled with the local side. */
-	manual: string;
+	manual?: string;
 }
 
 /**
@@ -62,14 +62,15 @@ interface FileState {
 export class ApiConflictModal extends Modal {
 	private states: FileState[] = [];
 	private finished = false;
-	/** One rendered card per conflicting file; only the current one is shown. */
-	private steps: HTMLElement[] = [];
+	/** Only the current card exists in the DOM. Choices and edits survive navigation. */
+	private step?: HTMLElement;
 	private current = 0;
 	private progressEl!: HTMLElement;
 	private body!: HTMLElement;
 	private footer!: HTMLElement;
 	private cleanupKeyboard: () => void = () => {};
 	onCloseHook?: () => void;
+	onLifecycle?: (stage: string) => void;
 
 	constructor(
 		app: App,
@@ -83,6 +84,14 @@ export class ApiConflictModal extends Modal {
 	}
 
 	onOpen() {
+		this.onLifecycle?.("conflict-modal-open");
+		this.containerEl.addEventListener("keydown", event => {
+			if (event.key === "Escape") this.onLifecycle?.("conflict-modal-escape-input");
+		}, { capture: true });
+		this.containerEl.addEventListener("pointerdown", event => {
+			if (event.target instanceof Node && !this.modalEl.contains(event.target))
+				this.onLifecycle?.("conflict-modal-outside-input");
+		}, { capture: true });
 		const { contentEl, titleEl, modalEl } = this;
 		// Reuse the git conflict modal's classes so the scroll/footer layout and
 		// styling apply unchanged.
@@ -98,54 +107,24 @@ export class ApiConflictModal extends Modal {
 		});
 		body.createEl("p", { text: t("acmIntro"), cls: "gitsync-conflict-intro" });
 
-		for (const file of this.files) {
-			const localDeleted = file.localContent === null;
-			const remoteDeleted = file.remoteContent === null;
-			const binary =
-				looksBinary(file.localContent) || looksBinary(file.remoteContent);
-			// Default: keep the remote side (matches "pull wins" expectations) for
-			// delete/modify clashes; otherwise pre-select manual when editable so
-			// the user reviews a merge, falling back to remote for binaries.
-			let choice: Choice;
-			if (binary || localDeleted || remoteDeleted) {
-				choice = "remote";
-			} else {
-				choice = "manual";
-			}
-			const manual = file.localContent
-				? TEXT_DECODER.decode(file.localContent)
-				: file.remoteContent
-				? TEXT_DECODER.decode(file.remoteContent)
-				: "";
-			const state: FileState = {
-				file,
-				binary,
-				localDeleted,
-				remoteDeleted,
-				choice,
-				manual,
-			};
-			this.states.push(state);
-			this.renderFile(body, state);
-		}
+		this.states = this.files.map(file => ({ file,
+			localDeleted: file.localContent === null, remoteDeleted: file.remoteContent === null }));
 
 		this.footer = contentEl.createDiv({ cls: "gitsync-conflict-footer" });
 		this.showStep(0);
 
 		// Keep the active editor reachable above the on-screen keyboard (mobile).
 		this.cleanupKeyboard = keepModalAboveKeyboard(this.containerEl, modalEl);
+		this.onLifecycle?.("conflict-modal-rendered");
 	}
 
 	/** Show a single conflict step and rebuild the navigation footer for it. */
 	private showStep(index: number) {
 		this.current = index;
-		this.steps.forEach((step, i) =>
-			step.toggleClass("gitsync-hidden", i !== index)
-		);
-		this.progressEl.setText(
-			t("cmProgress", { i: index + 1, n: this.steps.length })
-		);
-		this.progressEl.toggleClass("gitsync-hidden", this.steps.length <= 1);
+		this.step?.remove();
+		this.renderFile(this.body, this.states[index]);
+		this.progressEl.setText(t("cmProgress", { i: index + 1, n: this.states.length }));
+		this.progressEl.toggleClass("gitsync-hidden", this.states.length <= 1);
 		this.body.scrollTop = 0;
 		this.renderFooter();
 	}
@@ -153,7 +132,7 @@ export class ApiConflictModal extends Modal {
 	private renderFooter() {
 		this.footer.empty();
 		const nav = this.footer.createDiv({ cls: "gitsync-wizard-nav" });
-		const isLast = this.current === this.steps.length - 1;
+		const isLast = this.current === this.states.length - 1;
 		if (this.current > 0) {
 			const back = nav.createEl("button", { text: t("cmBack") });
 			back.addEventListener("click", () => this.showStep(this.current - 1));
@@ -166,6 +145,8 @@ export class ApiConflictModal extends Modal {
 			text: t("cmResolve"),
 			cls: "mod-cta",
 		});
+		done.disabled = this.states.some(state => state.choice === undefined);
+		if (done.disabled) this.footer.createEl("p", { text: t("apiReviewAll") });
 		done.addEventListener("click", () => this.resolve());
 		if (this.states.length > 1) {
 			const bulk = this.footer.createDiv({ cls: "gitsync-conflict-bulk" });
@@ -180,26 +161,26 @@ export class ApiConflictModal extends Modal {
 
 	private selectAll(choice: "local" | "remote") {
 		for (const state of this.states) state.choice = choice;
-		for (const step of this.steps) step.remove();
-		this.steps = [];
-		for (const state of this.states) this.renderFile(this.body, state);
+
 		this.showStep(this.current);
 	}
 
 	private renderFile(parent: HTMLElement, state: FileState) {
 		const step = parent.createDiv({ cls: "gitsync-conflict-step" });
-		this.steps.push(step);
+		this.step = step;
+		if (state.binary === undefined) state.binary = looksBinary(state.file.localContent) || looksBinary(state.file.remoteContent);
+		if (state.choice === undefined) state.choice = state.binary || state.localDeleted || state.remoteDeleted ? "remote" : "manual";
+		if (!state.binary && !state.localDeleted && !state.remoteDeleted && state.manual === undefined)
+			state.manual = TEXT_DECODER.decode(state.file.localContent!);
 		step.createEl("h3", { text: state.file.path });
 
 		const editor = createDiv();
-		const textarea = editor.createEl("textarea", {
-			cls: "gitsync-conflict-editor",
-		});
-		textarea.value = state.manual;
-		textarea.addEventListener("input", () => {
-			state.manual = textarea.value;
-		});
-		scrollIntoViewOnFocus(textarea);
+		if (!state.binary && !state.localDeleted && !state.remoteDeleted) {
+			const textarea = editor.createEl("textarea", { cls: "gitsync-conflict-editor" });
+			textarea.value = state.manual ?? "";
+			textarea.addEventListener("input", () => { state.manual = textarea.value; });
+			scrollIntoViewOnFocus(textarea);
+		}
 
 		// Frame each option per the kind of clash so the wording matches reality:
 		// a deleted side reads "keep deleted" / "restore", not "use … version".
@@ -218,7 +199,7 @@ export class ApiConflictModal extends Modal {
 			}
 			dd.addOption("local", localLabel)
 				.addOption("remote", remoteLabel)
-				.setValue(state.choice)
+				.setValue(state.choice!)
 				.onChange((v) => {
 					state.choice = v as Choice;
 					editor.toggleClass(
@@ -238,24 +219,26 @@ export class ApiConflictModal extends Modal {
 		const pre = details.createEl("pre", {
 			cls: "gitsync-conflict-preview",
 		});
-		pre.setText(
-			`===== ${t("cmOptLocal")} =====\n${this.previewOf(
-				state.file.localContent
-			)}\n\n` +
-				`===== ${t("cmOptRemote")} =====\n${this.previewOf(
-					state.file.remoteContent
-				)}`
-		);
+		let previewed = false;
+		details.addEventListener("toggle", () => {
+			if (!details.open || previewed) return;
+			previewed = true;
+			pre.setText(`===== ${t("cmOptLocal")} =====\n${this.previewOf(state.file.localContent)}\n\n` +
+				`===== ${t("cmOptRemote")} =====\n${this.previewOf(state.file.remoteContent)}`);
+		});
 	}
 
 	/** Human-readable preview: text decoded, deletions and binaries labelled. */
 	private previewOf(bytes: Uint8Array | null): string {
 		if (bytes === null) return t("cmDeleted");
 		if (looksBinary(bytes)) return t("acmBinary");
-		return TEXT_DECODER.decode(bytes);
+		const prefix = bytes.subarray(0, 16384);
+		return TEXT_DECODER.decode(prefix) + (bytes.length > prefix.length ? "\n" + t("apiPreviewTruncated") : "");
 	}
 
 	private resolve() {
+		if (this.finished || this.states.some(state => state.choice === undefined)) return;
+		this.onLifecycle?.("conflict-modal-submit");
 		const resolved = new Map<string, Uint8Array | null>();
 		for (const s of this.states) {
 			let content: Uint8Array | null;
@@ -268,7 +251,7 @@ export class ApiConflictModal extends Modal {
 					break;
 				default:
 					// Manual: the edited text becomes the new content.
-					content = TEXT_ENCODER.encode(s.manual);
+					content = TEXT_ENCODER.encode(s.manual ?? "");
 					break;
 			}
 			resolved.set(s.file.path, content);
@@ -279,6 +262,7 @@ export class ApiConflictModal extends Modal {
 	}
 
 	onClose() {
+		this.onLifecycle?.(this.finished ? "conflict-modal-close-resolved" : "conflict-modal-close-unresolved");
 		this.cleanupKeyboard();
 		this.contentEl.empty();
 		this.onCloseHook?.();

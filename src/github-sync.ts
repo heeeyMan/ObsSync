@@ -1,4 +1,6 @@
 import { requestUrl, RequestUrlResponse, DataAdapter } from "obsidian";
+import type { LargeFileSync } from "./chunked-sync";
+import type { Diagnose } from "./sync-diagnostics";
 import { t } from "./i18n";
 import { removeVaultFile } from "./vault-fs";
 
@@ -247,7 +249,7 @@ export async function getTree(
 			entries.push({
 				path: typeof rec.path === "string" ? rec.path : "",
 				sha: typeof rec.sha === "string" ? rec.sha : "",
-				size: typeof rec.size === "number" ? rec.size : 0,
+				size: typeof rec.size === "number" ? rec.size : -1,
 				mode: typeof rec.mode === "string" ? rec.mode : "100644",
 			});
 		}
@@ -599,7 +601,7 @@ export async function gitBlobSha(content: Uint8Array): Promise<string> {
  * Feed bytes with {@link update} (any number of calls, any sizes) then read the
  * lowercase hex digest once with {@link hex}. Not reusable after `hex()`.
  */
-class Sha1 {
+export class Sha1 {
 	private h0 = 0x67452301;
 	private h1 = 0xefcdab89;
 	private h2 = 0x98badcfe;
@@ -816,6 +818,8 @@ async function scanLocalShas(
 	adapter: DataAdapter,
 	excluded: (path: string) => boolean,
 	onProgress?: (msg: string) => void,
+	diagnose?: Diagnose,
+	largeFiles?: LargeFileSync,
 ): Promise<Record<string, string>> {
 	const paths: string[] = [];
 	await listVaultFiles(adapter, "", excluded, paths);
@@ -823,9 +827,19 @@ async function scanLocalShas(
 	const shas: Record<string, string> = {};
 	let i = 0;
 	for (const p of paths) {
-		let bytes: Uint8Array | undefined = new Uint8Array(await adapter.readBinary(p));
-		shas[p] = await gitBlobSha(bytes);
-		bytes = undefined;
+		const file = diagnose ? await gitBlobSha(new TextEncoder().encode(p)) : undefined;
+		const stat = largeFiles || diagnose ? await adapter.stat(p) : null;
+		await diagnose?.({ stage: "scan-read", file, total: stat?.size });
+		if (largeFiles && stat && stat.size > largeFiles.threshold) {
+			await diagnose?.({ stage: "scan-stream", file, total: stat.size });
+			shas[p] = await largeFiles.hash(p, stat.size);
+		} else {
+			let bytes: Uint8Array | undefined = new Uint8Array(await adapter.readBinary(p));
+			await diagnose?.({ stage: "scan-hash", file, total: bytes.length });
+			shas[p] = await gitBlobSha(bytes);
+			bytes = undefined;
+		}
+		await diagnose?.({ stage: "scan-done", file });
 		i++;
 		if (i % PROGRESS_EVERY === 0) {
 			onProgress?.(t("progScanning"));
@@ -886,10 +900,13 @@ export async function apiSync(opts: {
 	excluded: (path: string) => boolean;
 	message?: string;
 	onProgress?: (msg: string) => void;
+	diagnose?: Diagnose;
+	largeFiles?: LargeFileSync;
 }): Promise<ApiSyncResult> {
 	const { owner, repo, branch, token, adapter, baseline, excluded, onProgress } = opts;
 
 	// 1. Remote state.
+	await opts.diagnose?.({ stage: "remote-head" });
 	onProgress?.(t("progFetching"));
 	const { commitSha: remoteCommit, treeSha: remoteTree } = await getBranchHead(
 		owner,
@@ -897,24 +914,27 @@ export async function apiSync(opts: {
 		branch,
 		token,
 	);
+	await opts.diagnose?.({ stage: "remote-tree" });
 	const { entries, truncated } = await getTree(owner, repo, remoteTree, token);
 	// GitHub truncates the recursive tree past its response limit. A partial list
 	// makes missing paths look "deleted remotely" and would delete them locally —
 	// abort before any diff/delete rather than silently lose data.
 	if (truncated) throw new Error(t("errTreeTruncated"));
 	const remoteShas: Record<string, string> = {};
+	const sizes = new Map(entries.map(e => [e.path, e.size]));
 	// Remember each tracked path's git mode so re-pushing a changed file keeps its
 	// executable bit (100755) instead of downgrading it to 100644 — otherwise a
 	// mobile push would undo the desktop engine's mode preservation and ping-pong.
 	const remoteModes: Record<string, string> = {};
 	for (const e of entries) {
 		if (!e.path || excluded(e.path)) continue;
+		if (opts.largeFiles && (!Number.isSafeInteger(e.size) || e.size < 0)) throw new Error(t("errChunkMetadata"));
 		remoteShas[e.path] = e.sha;
 		remoteModes[e.path] = e.mode;
 	}
 
 	// 2. Local state.
-	const localShas = await scanLocalShas(adapter, excluded, onProgress);
+	const localShas = await scanLocalShas(adapter, excluded, onProgress, opts.diagnose, opts.largeFiles);
 
 	// 3. Diff both sides against the baseline.
 	const local = diffShas(localShas, baseline.shas);
@@ -972,9 +992,17 @@ export async function apiSync(opts: {
 		if (localShas[p] === remoteShas[p]) {
 			continue;
 		}
-		let bytes: Uint8Array | undefined = await getBlob(owner, repo, remoteShas[p], token);
-		await writeVaultFile(adapter, p, bytes);
-		bytes = undefined;
+		await opts.diagnose?.({ stage: "pull-download", file: remoteShas[p], total: sizes.get(p) });
+		const size = sizes.get(p)!;
+		if (opts.largeFiles && size > opts.largeFiles.threshold) {
+			await opts.largeFiles.pull({ path: p, commit: remoteCommit, sha: remoteShas[p], size, localSha: localShas[p] });
+		} else {
+			let bytes: Uint8Array | undefined = await getBlob(owner, repo, remoteShas[p], token);
+			await opts.diagnose?.({ stage: "pull-write", file: remoteShas[p], total: bytes.length });
+			await writeVaultFile(adapter, p, bytes);
+			bytes = undefined;
+		}
+		await opts.diagnose?.({ stage: "pull-done", file: remoteShas[p] });
 		result.pulled.push(p);
 		pullCount++;
 		if (pullCount % PROGRESS_EVERY === 0) {
@@ -1002,8 +1030,11 @@ export async function apiSync(opts: {
 		const treeEntries: TreeEntryInput[] = [];
 		let pushCount = 0;
 		for (const p of realPush) {
+			await opts.diagnose?.({ stage: "push-read", file: localShas[p] });
 			let bytes: Uint8Array | undefined = new Uint8Array(await adapter.readBinary(p));
+			await opts.diagnose?.({ stage: "push-upload", file: localShas[p], total: bytes.length });
 			const sha = await createBlob(owner, repo, token, bytes);
+			await opts.diagnose?.({ stage: "push-done", file: localShas[p] });
 			bytes = undefined;
 			// Keep the remote's mode for an existing path (preserves 100755); a
 			// brand-new path has no remote mode → createTree defaults to 100644.
@@ -1087,8 +1118,9 @@ export async function commitResolutions(opts: {
 	resolved: Array<{ path: string; content: Uint8Array | null }>;
 	message?: string;
 	onProgress?: (msg: string) => void;
+	diagnose?: Diagnose;
 }): Promise<{ committed: boolean; newBaseline: ApiSyncBaseline }> {
-	const { owner, repo, branch, token, adapter, baseline, resolved, onProgress } = opts;
+	const { owner, repo, branch, token, adapter, baseline, resolved, onProgress, diagnose } = opts;
 
 	// No resolutions → nothing to write, commit, or change in the baseline.
 	if (resolved.length === 0) {
@@ -1098,6 +1130,7 @@ export async function commitResolutions(opts: {
 	// 1. Write resolutions to disk first (working tree == what we'll commit).
 	onProgress?.(t("progMerging"));
 	for (const r of resolved) {
+		await diagnose?.({ stage: "conflict-write-local" });
 		if (r.content !== null) {
 			await writeVaultFile(adapter, r.path, r.content);
 		} else {
@@ -1107,6 +1140,7 @@ export async function commitResolutions(opts: {
 
 	// 2. Re-read the live remote head so we build on top of the current tip.
 	onProgress?.(t("progFetching"));
+	await diagnose?.({ stage: "conflict-fetch-head" });
 	const { commitSha: remoteCommit, treeSha: remoteTree } = await getBranchHead(
 		owner,
 		repo,
@@ -1117,6 +1151,7 @@ export async function commitResolutions(opts: {
 	// truncated tree just means some paths fall back to the 100644 default.
 	const remoteModes: Record<string, string> = {};
 	try {
+		await diagnose?.({ stage: "conflict-fetch-tree" });
 		const { entries } = await getTree(owner, repo, remoteTree, token);
 		for (const e of entries) if (e.path) remoteModes[e.path] = e.mode;
 	} catch {
@@ -1133,6 +1168,7 @@ export async function commitResolutions(opts: {
 	for (const r of resolved) {
 		if (r.content !== null) {
 			let bytes: Uint8Array | undefined = r.content;
+			await diagnose?.({ stage: "conflict-upload-blob", bytes: bytes.byteLength, total: pushCount });
 			const sha = await createBlob(owner, repo, token, bytes);
 			bytes = undefined;
 			treeEntries.push({ path: r.path, sha, mode: remoteModes[r.path] });
@@ -1147,10 +1183,15 @@ export async function commitResolutions(opts: {
 		}
 	}
 
+	await diagnose?.({ stage: "conflict-create-tree" });
 	const newTree = await createTree(owner, repo, token, remoteTree, treeEntries);
 	const message = opts.message && opts.message.trim() ? opts.message : "GitSync";
+	await diagnose?.({ stage: "conflict-create-commit" });
 	const newCommit = await createCommit(owner, repo, token, message, newTree, remoteCommit);
+	await diagnose?.({ stage: "conflict-update-ref" });
 	await updateRef(owner, repo, token, branch, newCommit, false);
+
+	await diagnose?.({ stage: "conflict-remote-complete" });
 
 	// 4. Rebuild the baseline: keep everything from the prior baseline, then
 	//    apply the resolved paths (new sha, or removed when deleted).

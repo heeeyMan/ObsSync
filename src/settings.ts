@@ -13,6 +13,8 @@ import { type ApiSyncBaseline, createBranch, parseGitHubRepo } from "./github-sy
 import { LangPref, t } from "./i18n";
 
 export interface GitSyncSettings {
+	diagnosticsEnabled: boolean;
+	apiConflictsPending: boolean;
 	/** HTTPS clone URL of the remote, e.g. https://github.com/user/repo.git */
 	remoteUrl: string;
 	/** Branch to sync against. */
@@ -56,6 +58,8 @@ export interface GitSyncSettings {
 }
 
 export const DEFAULT_SETTINGS: GitSyncSettings = {
+	diagnosticsEnabled: false,
+	apiConflictsPending: false,
 	remoteUrl: "",
 	branch: "main",
 	authorName: "",
@@ -350,8 +354,7 @@ export class GitSyncSettingTab extends PluginSettingTab {
 					.addOption("api", t("engineApi"))
 					.setValue(s.syncEngine)
 					.onChange(async (value) => {
-						s.syncEngine = value as GitSyncSettings["syncEngine"];
-						await this.plugin.saveSettings();
+						await this.plugin.changeSyncEngine(value as GitSyncSettings["syncEngine"]);
 						// Re-render so the Initialize row reflects whether the
 						// effective engine is API (where init isn't needed).
 						this.display();

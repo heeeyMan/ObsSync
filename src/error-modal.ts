@@ -9,6 +9,9 @@ export interface SyncErrorInfo {
 	detail: string;
 	/** Epoch ms when it happened. */
 	when: number;
+	engine?: "git" | "api";
+	selectedEngine?: "auto" | "git" | "api";
+	pluginVersion?: string;
 }
 
 /**
@@ -36,6 +39,9 @@ export class ErrorDetailModal extends Modal {
 			cls: "gitsync-error-when",
 		});
 
+		contentEl.createEl("p", { text: t("errModalHistorical") });
+		if (this.info.engine) contentEl.createEl("p", { text: this.context() });
+
 		contentEl.createEl("p", { text: t("errModalDetail") });
 		const pre = contentEl.createEl("pre", { cls: "gitsync-error-detail" });
 		pre.setText(this.info.detail || this.info.message);
@@ -55,8 +61,12 @@ export class ErrorDetailModal extends Modal {
 		close.addEventListener("click", () => this.close());
 	}
 
+	private context(): string {
+		return t("errModalEngine", { engine: this.info.engine ?? "?", selected: this.info.selectedEngine ?? "?", version: this.info.pluginVersion ?? "?" });
+	}
+
 	private async copyDetails() {
-		const text = `${this.info.message}\n\n${this.info.detail}`;
+		const text = `${this.info.message}\n${new Date(this.info.when).toISOString()}\n${this.context()}\n${t("errModalHistorical")}\n\n${this.info.detail}`;
 		try {
 			await navigator.clipboard.writeText(text);
 			new Notice(t("errModalCopied"));
