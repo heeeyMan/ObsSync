@@ -125,6 +125,7 @@ export class GitSyncSettingTab extends PluginSettingTab {
 					.addOption("auto", t("langAuto"))
 					.addOption("en", t("langEn"))
 					.addOption("ru", t("langRu"))
+					.addOption("zh", t("langZh"))
 					.setValue(s.language)
 					.onChange(async (value) => {
 						s.language = value as LangPref;

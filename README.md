@@ -173,7 +173,8 @@ MIT — see [LICENSE](./LICENSE).
 ### Interface language
 
 The language selector at the top of the plugin settings offers **Auto**,
-**English**, and **Русский**. Auto uses the system locale exposed by Obsidian's
-runtime: Russian for `ru` locales, English for all other locales. A manual
-choice is saved on the device and overrides automatic detection. Settings,
-commands, ribbon tooltips, and the status bar update when the choice changes.
+**English**, **Русский**, and **中文**. Auto uses the system locale exposed by
+Obsidian's runtime: Russian for `ru` locales, Chinese for `zh` locales, and
+English for all other locales. A manual choice is saved on the device and
+overrides automatic detection. Settings, commands, ribbon tooltips, and the
+status bar update when the choice changes.
