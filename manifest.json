@@ -3,7 +3,7 @@
 	"name": "Git Vault Sync",
 	"version": "0.2.27",
 	"minAppVersion": "1.8.7",
-	"description": "One-click Git sync with interactive conflict resolution and selective commits. HTTPS personal-access-token auth, English and Russian UI; runs on desktop and mobile.",
+	"description": "One-click Git sync with interactive conflict resolution and selective commits. HTTPS personal-access-token auth, English, Russian and Chinese UI; runs on desktop and mobile.",
 	"author": "alexandervasin",
 	"isDesktopOnly": false
 }
